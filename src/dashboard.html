@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pirates of note</title>
+<link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">⚓</span>
+    <div>
+      <h1>Pirates of note <span class="meta">Pon</span></h1>
+      <p class="sub" id="whoami">読み込み中…</p>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="overview" aria-selected="true">概要</button>
+    <button role="tab" data-tab="articles">記事</button>
+    <button role="tab" data-tab="comments">コメント <span class="pill" id="unrepliedBadge" hidden></span></button>
+    <button role="tab" data-tab="data">データ・設定</button>
+  </nav>
+</header>
+
+<main>
+  <!-- 概要 -->
+  <section id="tab-overview" class="tab">
+    <div id="emptyState" class="card empty" hidden>
+      <h2>まだデータがありません</h2>
+      <p>noteにログインした状態で、note.com のページを開くと自動で記録が始まります（1日1回）。</p>
+      <p><button class="btn primary" data-action="run-now">今すぐ取得する</button></p>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <p class="meta" id="snapMeta"></p>
+
+    <div class="card">
+      <div class="card-head">
+        <h2 id="chartTitle">推移</h2>
+        <div class="controls">
+          <label>指標
+            <select id="metricSel">
+              <option value="pv">ページビュー</option>
+              <option value="imp">インプレッション</option>
+              <option value="like">スキ</option>
+              <option value="comment">コメント</option>
+              <option value="follower">フォロワー</option>
+            </select>
+          </label>
+          <div class="seg" role="group" aria-label="表示方法">
+            <button data-mode="diff" aria-pressed="true">増えた数</button>
+            <button data-mode="total" aria-pressed="false">累計</button>
+          </div>
+        </div>
+      </div>
+      <div id="chart" class="chart"></div>
+      <p class="hint" id="chartHint"></p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>前回から伸びた記事</h2><span class="meta" id="growthMeta"></span></div>
+      <ol class="rank" id="growthList"></ol>
+    </div>
+  </section>
+
+  <!-- 記事 -->
+  <section id="tab-articles" class="tab" hidden>
+    <div class="card">
+      <div class="card-head">
+        <h2>記事一覧 <span class="meta" id="articleCount"></span></h2>
+        <input type="search" id="articleSearch" placeholder="タイトルで絞り込み">
+      </div>
+      <div class="table-wrap">
+        <table class="grid" id="articleTable">
+          <thead><tr>
+            <th data-sort="title" class="l">タイトル</th>
+            <th data-sort="publishedAt">公開日</th>
+            <th data-sort="imp">IMP</th>
+            <th data-sort="pv">PV</th>
+            <th data-sort="dpv">PV 前回比</th>
+            <th data-sort="like">スキ</th>
+            <th data-sort="dlike">スキ 前回比</th>
+            <th data-sort="comment">コメント</th>
+            <th data-sort="ctr" title="PV ÷ インプレッション">クリック率</th>
+            <th data-sort="likeRate" title="スキ ÷ PV">スキ率</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- コメント -->
+  <section id="tab-comments" class="tab" hidden>
+    <div class="card">
+      <div class="card-head">
+        <h2>未返信のコメント <span class="meta" id="unrepliedMeta"></span></h2>
+        <label class="check"><input type="checkbox" id="showDismissed"> 対応済みも表示</label>
+      </div>
+      <p class="hint">自分の記事についたコメントのうち、あなたがまだ返信していないものです（noteの「作者が返信済みか」の情報を使っています）。返信しないと決めたものは「対応済み」にできます。</p>
+      <div id="unrepliedList"></div>
+      <h3 class="subhead">返信への返信（要確認）</h3>
+      <p class="hint">あなたが返信したコメントに、相手からさらに返信が来たものです。noteの通知から拾っているため、直近2〜3週間分と、それ以降に届いたものが対象です。すでに返信していたら「確認済み」にしてください。</p>
+      <div id="threadList"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>自分がコメントした記事 <span class="meta" id="myCommentsMeta"></span></h2></div>
+      <p class="hint">他の人の記事を開いたときにコメント欄から見つけたものと、通知（あなたのコメントへの返信・スキ）から見つけたものを記録しています。noteには自分のコメント一覧の機能がないため、拡張機能を入れる前のコメントは、その記事を開き直すか、返信・スキの通知が来たときに追加されます。</p>
+      <div id="myCommentsList"></div>
+    </div>
+  </section>
+
+  <!-- データ・設定 -->
+  <section id="tab-data" class="tab" hidden>
+    <div class="card">
+      <h2>取得</h2>
+      <p><button class="btn primary" data-action="run-now">今すぐ取得する</button> <span class="meta" id="runStatus"></span></p>
+      <p class="hint">noteのタブが開いていない場合は、noteのトップページを裏で開いて取得し、終わったら自動で閉じます。取得は1秒以上の間隔をあけて行います。</p>
+      <div class="settings">
+        <label class="check"><input type="checkbox" data-setting="autoCollect"> note を開いたときに1日1回、自動で記録する</label>
+        <label class="check"><input type="checkbox" data-setting="checkComments"> 未返信コメントを確認する（6時間ごと）</label>
+        <label class="check"><input type="checkbox" data-setting="recordMyComments"> 自分が書いたコメントを記録する</label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>書き出し・バックアップ</h2>
+      <div class="btn-row">
+        <button class="btn" data-action="csv-latest">最新の記事別データ（CSV）</button>
+        <button class="btn" data-action="csv-all">全スナップショット（CSV）</button>
+        <button class="btn" data-action="json-backup">バックアップ（JSON）</button>
+        <label class="btn">バックアップから復元<input type="file" accept="application/json" id="importFile" hidden></label>
+      </div>
+      <p class="hint">データはこのブラウザの中にだけ保存されています。拡張機能を削除するとデータも消えるので、ときどきバックアップを保存してください。<span id="storageInfo"></span></p>
+    </div>
+
+    <div class="card">
+      <h2>動作ログ</h2>
+      <ul class="logs" id="logList"></ul>
+    </div>
+
+    <div class="card danger">
+      <h2>データの削除</h2>
+      <p><button class="btn danger" data-action="wipe">保存したデータをすべて削除</button></p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  非公式ツールです。note株式会社とは関係ありません。noteの仕様変更で動かなくなることがあります。
+</footer>
+
+<div id="tooltip" class="tooltip" role="status" hidden></div>
+<script src="db.js"></script>
+<script src="dashboard.js"></script>
+</body>
+</html>

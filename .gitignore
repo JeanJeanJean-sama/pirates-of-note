@@ -1,0 +1,11 @@
+node_modules/
+*.zip
+*.csv
+*.json.bak
+pon-backup-*.json
+note-data-notebook-backup-*.json
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
