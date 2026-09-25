@@ -1,0 +1,16 @@
+{
+  "name": "Pirates of note（非公式）",
+  "short_name": "Pon",
+  "description": "自分のnoteのアクセス数値を記録・分析する非公式ツール（Web版）",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f6f4",
+  "theme_color": "#1e56a0",
+  "lang": "ja",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

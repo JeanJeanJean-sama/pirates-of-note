@@ -14,8 +14,8 @@
  * ============================================================ */
 (() => {
   'use strict';
-  if (window.__nddLoaded) return;
-  window.__nddLoaded = true;
+  if (window.__ponLoaded) return;
+  window.__ponLoaded = true;
 
   const INTERVAL_MS = 1000;
   const COMMENT_CHECK_EVERY_MS = 6 * 3600e3;
@@ -194,6 +194,11 @@
     const key = noteKeyOf(location.pathname);
     const author = userOf(location.pathname);
     if (!key || !author) return;
+    if (author === me.urlname) {
+      // 自分の記事：開くたびに未返信の状態を更新し、未返信が残っていれば返信を待って確認し直す
+      await refreshOwnArticle(key, me, state);
+      return;
+    }
     const last = state.pageChecks[key] || 0;
     if (Date.now() - last < PAGE_CHECK_EVERY_MS) return;
     const pageChecks = { ...state.pageChecks, [key]: Date.now() };
@@ -202,13 +207,6 @@
     await send('SET_KV', { key: 'pageChecks', value: trimmed });
 
     const roots = await fetchRootComments(key, 5);
-    if (author === me.urlname) {
-      // 自分の記事なら、未返信の状態をその場で更新
-      const snapItem = state.latestSnapshot && state.latestSnapshot.items.find((i) => i.key === key);
-      const it = { key, title: (snapItem && snapItem.title) || cleanTitle(), url: location.origin + location.pathname, comment: snapItem ? snapItem.comment : -1 };
-      await send('SAVE_UNREPLIED', { records: [buildUnrepliedRecord(it, roots, me)] });
-      return;
-    }
     const mine = roots.filter((c) => c.user && c.user.urlname === me.urlname);
     if (!mine.length) return;
     const title = cleanTitle();
@@ -223,6 +221,35 @@
     });
   }
   const cleanTitle = () => document.title.replace(/｜.*$/, '').trim();
+
+  /* 自分の記事ページ：返信したらすぐ未返信から外す
+   * 未返信が残っている間だけ、画面が表示されているときに30秒ごと（最大15分）確認し直す */
+  const OWN_WATCH_INTERVAL_MS = 30 * 1000;
+  const OWN_WATCH_MAX_MS = 15 * 60 * 1000;
+  let ownWatch = null;
+
+  async function refreshOwnArticle(key, me, state) {
+    const roots = await fetchRootComments(key, 10);
+    const snapItem = state.latestSnapshot && state.latestSnapshot.items.find((i) => i.key === key);
+    const it = { key, title: (snapItem && snapItem.title) || cleanTitle(), url: location.origin + location.pathname, comment: snapItem ? snapItem.comment : -1 };
+    const rec = buildUnrepliedRecord(it, roots, me);
+    await send('SAVE_UNREPLIED', { records: [rec] });
+
+    if (ownWatch && ownWatch.key !== key) { clearInterval(ownWatch.timer); ownWatch = null; }
+    if (!rec.pending.length) { if (ownWatch) { clearInterval(ownWatch.timer); ownWatch = null; } return; }
+    if (ownWatch) return;
+    const startedAt = Date.now();
+    ownWatch = { key, timer: setInterval(async () => {
+      if (noteKeyOf(location.pathname) !== key || Date.now() - startedAt > OWN_WATCH_MAX_MS) { clearInterval(ownWatch.timer); ownWatch = null; return; }
+      if (document.hidden || running) return;
+      try {
+        const r = await fetchRootComments(key, 10);
+        const next = buildUnrepliedRecord(it, r, me);
+        await send('SAVE_UNREPLIED', { records: [next] });
+        if (!next.pending.length) { clearInterval(ownWatch.timer); ownWatch = null; }
+      } catch (_) { /* 次の周期で再試行 */ }
+    }, OWN_WATCH_INTERVAL_MS) };
+  }
 
   /** 通知から「自分のコメントへの返信・スキ」を拾い、コメントした記事を記録 */
   async function scanNotices(me, state) {
@@ -274,6 +301,71 @@
     return { articles: records.size, threadReplies: threadReplies.length };
   }
 
+  /* ---------- 本文の保存 ----------
+   * 自動：直近7日に公開した記事のうち未保存のもの
+   * 手動：ダッシュボードで「保存」を押した記事（bodyQueue）
+   * 1記事ずつ保存するので、途中でタブを閉じても次回続きから */
+  const AUTO_BODY_DAYS = 7;
+  const MAX_BODIES_PER_RUN = 300;
+
+  function bodyRecord(key, d, url) {
+    return {
+      noteKey: key,
+      title: d.name || '',
+      url: d.note_url || url || '',
+      publishedAt: d.publish_at || '',
+      hashtags: (d.hashtag_notes || []).map((h) => (h && h.hashtag && h.hashtag.name) || (h && h.name) || '').filter(Boolean).map((t) => t.replace(/^#/, '')),
+      price: d.price || 0,
+      isLimited: !!d.is_limited,
+      canRead: d.can_read !== false,
+      html: d.body || '',
+      eyecatch: d.eyecatch || '',
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+
+  async function saveBodies(state, s) {
+    const snapItems = state.latestSnapshot ? state.latestSnapshot.items : [];
+    const have = new Set(state.bodyKeys || []);
+    const cutoff = Date.now() - AUTO_BODY_DAYS * 864e5;
+    const auto = s.saveBodies ? snapItems.filter((i) => i.key && !have.has(i.key) && new Date(i.publishedAt).getTime() >= cutoff).map((i) => i.key) : [];
+    const keys = [...new Set([...(state.bodyQueue || []), ...auto])].slice(0, MAX_BODIES_PER_RUN);
+    if (!keys.length) return 0;
+    const urlOf = new Map(snapItems.map((i) => [i.key, i.url]));
+    let done = 0;
+    for (const key of keys) {
+      try {
+        const j = await getJson(`/api/v3/notes/${key}`);
+        await send('SAVE_BODY', { record: bodyRecord(key, (j && j.data) || {}, urlOf.get(key)) });
+        done++;
+      } catch (e) {
+        log('warn', `本文の取得に失敗: ${key}（${e.message}）`);
+        if (/HTTP 404/.test(e.message)) await send('SAVE_BODY', { record: { noteKey: key, missing: true, fetchedAt: new Date().toISOString() } }).catch(() => {});
+      }
+      if (done % 5 === 0) await send('SET_KV', { key: 'bodyProgress', value: { done, total: keys.length, at: Date.now() } });
+    }
+    await send('SET_KV', { key: 'bodyProgress', value: { done, total: keys.length, at: Date.now(), finished: true } });
+    return done;
+  }
+
+
+  /* ---------- ジァン=サマーとの縁（称号・着せ替えの解放）。perk-collect.js ---------- */
+  async function checkPerk(me, s) {
+    if (typeof PonPerkCollect === 'undefined') return;
+    const st = (await send('GET_STATE')).state;
+    const items = st.latestSnapshot ? st.latestSnapshot.items : [];
+    const urlOf = new Map(items.map((i) => [i.key, i.url]));
+    const before = st.perk;
+    const perk = await PonPerkCollect.check({
+      getJson, me, prev: before, force: !!st.perkForce,
+      ownKeys: items.map((i) => i.key), skipKeys: st.bodyKeys,
+      onBody: s.saveBodies ? (key, d) => send('SAVE_BODY', { record: bodyRecord(key, d, urlOf.get(key)) }) : null,
+    });
+    await send('SET_KV', { key: 'perk', value: perk });
+    if (st.perkForce) await send('SET_KV', { key: 'perkForce', value: false });
+    if (!before || before.checkedAt !== perk.checkedAt) log('info', `称号の解放を確認しました（フォロー${perk.following ? '中' : 'なし'}）`);
+  }
+
   /* ---------- 実行制御 ---------- */
   function jstToday() {
     return new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
@@ -296,7 +388,7 @@
       const { state } = await send('GET_STATE');
       force = force || state.forceRun;
       const s = state.settings;
-      const lock = await send('ACQUIRE_LOCK', { ttlMs: 10 * 60e3 });
+      const lock = await send('ACQUIRE_LOCK', { ttlMs: 20 * 60e3 });
       if (!lock.granted) return;
       locked = true;
       if (state.forceRun) await send('SET_KV', { key: 'forceRun', value: false });
@@ -325,7 +417,10 @@
           if (r.articles || r.threadReplies) log('info', `通知を確認しました（自分がコメントした記事 ${r.articles}件、自分の記事での返信への返信 ${r.threadReplies}件）`);
         }
       }
+      const n = await saveBodies((await send('GET_STATE')).state, s);
+      if (n) log('info', `記事の本文を ${n} 件保存しました`);
       if (s.recordMyComments || s.checkComments) await recordMyCommentsOnPage(me, fresh);
+      try { await checkPerk(me, s); } catch (e) { if (!String(e.message).includes('NOT_LOGGED_IN')) log('warn', `称号の確認に失敗: ${e.message}`); }
     } catch (e) {
       if (String(e.message).includes('NOT_LOGGED_IN')) return;
       log('error', e.message);

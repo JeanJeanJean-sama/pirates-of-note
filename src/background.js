@@ -6,10 +6,7 @@
  *  ・未返信コメント数をアイコンのバッジに表示
  * note への通信はすべて content.js（note.com のページ内）で行い、ここでは行わない。
  * ============================================================ */
-importScripts('db.js');
-
-const DEFAULT_SETTINGS = { autoCollect: true, checkComments: true, recordMyComments: true };
-const LOG_LIMIT = 200;
+importScripts('db.js', 'store.js'); // 保存処理は store.js（Webアプリ版と共通）
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('src/dashboard.html') });
@@ -28,7 +25,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 async function handle(msg, sender) {
   const p = msg.payload || {};
   switch (msg.type) {
-    case 'GET_STATE': return { state: await getState() };
+    case 'GET_STATE': return { state: await PonStore.getState() };
 
     case 'ACQUIRE_LOCK': {
       const lock = await NDB.kvGet('lock', null);
@@ -40,40 +37,34 @@ async function handle(msg, sender) {
     }
     case 'RELEASE_LOCK': await NDB.kvSet('lock', null); return {};
 
-    case 'SAVE_ME': await NDB.kvSet('me', { ...p, updatedAt: Date.now() }); return {};
+    case 'SAVE_ME': await PonStore.saveMe(p); return {};
 
-    case 'SAVE_SNAPSHOT':
-      await NDB.put('snapshots', p.snapshot);
-      await NDB.kvSet('lastSnapshotAt', Date.now());
-      return {};
+    case 'SAVE_SNAPSHOT': await PonStore.saveSnapshot(p.snapshot); return {};
 
-    case 'SAVE_UNREPLIED':
-      await NDB.putMany('unreplied', p.records);
-      await refreshBadge();
-      return {};
+    case 'SAVE_UNREPLIED': await PonStore.saveUnreplied(p.records); await refreshBadge(); return {};
 
-    case 'SAVE_MY_COMMENTS': {
-      for (const rec of p.records) {
-        const old = await NDB.get('myComments', rec.id);
-        await NDB.put('myComments', mergeMyComment(old, rec));
-      }
-      return {};
-    }
+    case 'SAVE_MY_COMMENTS': await PonStore.saveMyComments(p.records); return {};
 
     case 'SET_KV': await NDB.kvSet(p.key, p.value); return {};
 
-    case 'SAVE_THREAD_REPLIES': {
-      const cur = await NDB.kvGet('threadReplies', {});
-      for (const it of p.items) cur[it.id] = cur[it.id] || it;
-      const kept = Object.fromEntries(Object.entries(cur).sort((a, b) => (b[1].at || '').localeCompare(a[1].at || '')).slice(0, 300));
-      await NDB.kvSet('threadReplies', kept);
-      await refreshBadge();
-      return {};
+    case 'SAVE_THREAD_REPLIES': await PonStore.saveThreadReplies(p.items); await refreshBadge(); return {};
+
+    case 'LOG': await PonStore.appendLog(p.level, p.message); return {};
+
+    case 'RUN_NOW': return runNow(true);
+
+    case 'SAVE_BODY': await PonStore.saveBody(p.record); return {};
+
+    case 'RUN_BODIES': {
+      // p.keys: 保存したい記事キーの配列（ダッシュボードで「保存」を押したもの）
+      const q = await NDB.kvGet('bodyQueue', []);
+      await NDB.kvSet('bodyQueue', [...new Set([...q, ...(p.keys || [])])]);
+      return runNow(false);
     }
 
-    case 'LOG': return appendLog(p.level, p.message);
+    case 'RUN_PERK': await NDB.kvSet('perkForce', true); return runNow(false);
 
-    case 'RUN_NOW': return runNow();
+    case 'CLEAR_BODY_QUEUE': await NDB.kvSet('bodyQueue', []); return {};
 
     case 'REFRESH_BADGE': await refreshBadge(); return {};
 
@@ -91,60 +82,13 @@ async function handle(msg, sender) {
   }
 }
 
-async function getState() {
-  const [me, settings, snapshots, unreplied, lastCommentCheckAt, lastNoticeScanAt, lastNoticeSeenAt, pageChecks, forceRun, commentCheckIncomplete, noticeScanVersion] = await Promise.all([
-    NDB.kvGet('me', null),
-    NDB.kvGet('settings', {}),
-    NDB.getAll('snapshots'),
-    NDB.getAll('unreplied'),
-    NDB.kvGet('lastCommentCheckAt', 0),
-    NDB.kvGet('lastNoticeScanAt', 0),
-    NDB.kvGet('lastNoticeSeenAt', ''),
-    NDB.kvGet('pageChecks', {}),
-    NDB.kvGet('forceRun', false),
-    NDB.kvGet('commentCheckIncomplete', false),
-    NDB.kvGet('noticeScanVersion', 1),
-  ]);
-  snapshots.sort((a, b) => a.date.localeCompare(b.date));
-  const latest = snapshots[snapshots.length - 1] || null;
-  return {
-    me,
-    settings: { ...DEFAULT_SETTINGS, ...settings },
-    latestSnapshot: latest && { date: latest.date, items: latest.items.map((i) => ({ key: i.key, title: i.title, url: i.url, comment: i.comment })) },
-    checked: Object.fromEntries(unreplied.map((u) => [u.noteKey, u.checkedCommentCount])),
-    lastCommentCheckAt, lastNoticeScanAt, lastNoticeSeenAt, pageChecks, forceRun, commentCheckIncomplete, noticeScanVersion,
-  };
-}
-
-/** 同じ記事の自分のコメント記録をマージ（通知由来の反応履歴は最新20件まで） */
-function mergeMyComment(old, rec) {
-  if (!old) return rec;
-  const activity = [...(rec.activity || []), ...(old.activity || [])];
-  const seen = new Set();
-  const uniq = activity.filter((a) => { const k = `${a.kind}|${a.at}|${a.by}`; if (seen.has(k)) return false; seen.add(k); return true; })
-    .sort((a, b) => (b.at || '').localeCompare(a.at || '')).slice(0, 20);
-  return {
-    ...old, ...Object.fromEntries(Object.entries(rec).filter(([, v]) => v !== undefined && v !== null && v !== '')),
-    activity: uniq,
-    lastActivityAt: [old.lastActivityAt, rec.lastActivityAt].filter(Boolean).sort().pop() || null,
-    firstSeenAt: old.firstSeenAt || rec.firstSeenAt,
-  };
-}
-
-async function appendLog(level, message) {
-  const logs = await NDB.kvGet('logs', []);
-  logs.push({ at: Date.now(), level, message });
-  await NDB.kvSet('logs', logs.slice(-LOG_LIMIT));
-  return {};
-}
-
 /** 「今すぐ取得」：開いている note タブで実行。なければ note のダッシュボードを裏で開く */
-async function runNow() {
-  await NDB.kvSet('forceRun', true);
+async function runNow(forceAll) {
+  if (forceAll) await NDB.kvSet('forceRun', true);
   const tabs = await chrome.tabs.query({ url: 'https://note.com/*' });
   for (const t of tabs) {
     try {
-      await chrome.tabs.sendMessage(t.id, { type: 'RUN', force: true });
+      await chrome.tabs.sendMessage(t.id, { type: 'RUN', force: !!forceAll });
       return { via: 'existing-tab' };
     } catch (_) { /* content script 未注入のタブは飛ばす */ }
   }
@@ -156,9 +100,7 @@ async function runNow() {
 
 async function refreshBadge() {
   try {
-    const [recs, dismissed, threads] = await Promise.all([NDB.getAll('unreplied'), NDB.kvGet('dismissed', {}), NDB.kvGet('threadReplies', {})]);
-    const n = recs.reduce((a, r) => a + (r.pending || []).filter((c) => !dismissed[c.commentKey]).length, 0)
-      + Object.values(threads).filter((t) => !dismissed[`thr:${t.id}`]).length;
+    const n = await PonStore.unrepliedCount();
     await chrome.action.setBadgeText({ text: n > 0 ? String(n > 99 ? '99+' : n) : '' });
     await chrome.action.setBadgeBackgroundColor({ color: '#e34948' });
   } catch (_) { /* noop */ }

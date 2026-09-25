@@ -4,15 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Pirates of note</title>
-<link rel="stylesheet" href="dashboard.css">
-<script src="theme-boot.js"></script>
+<meta name="theme-color" content="#1e56a0">
+<meta name="description" content="自分のnoteのアクセス数値を記録・分析する非公式ツール（Web版）">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="app/dashboard.css">
+<script src="app/theme-boot.js"></script>
 </head>
 <body>
 <header class="top">
   <div class="brand">
     <span class="logo" aria-hidden="true">⚓</span>
     <div>
-      <h1>Pirates of note <span class="meta">Pon</span></h1>
+      <h1>Pirates of note <span class="meta">Pon Web</span></h1>
       <p class="sub" id="whoami">読み込み中…</p>
     </div>
   </div>
@@ -261,10 +266,14 @@
 </footer>
 
 <div id="tooltip" class="tooltip" role="status" hidden></div>
-<script src="db.js"></script>
-<script src="dashboard.js"></script>
-<script src="views.js"></script>
-<script src="bodies.js"></script>
-<script src="perks.js"></script>
+<script src="app/env.js"></script>
+<script src="app/db.js"></script>
+<script src="app/store.js"></script>
+<script src="app/web.js"></script>
+<script src="app/dashboard.js"></script>
+<script src="app/views.js"></script>
+<script src="app/bodies.js"></script>
+<script src="app/perks.js"></script>
+<script src="app/webapp.js"></script>
 </body>
 </html>
