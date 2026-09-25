@@ -1,5 +1,5 @@
 /* sw.js — オフラインでも開けるようにする（画面のファイルだけを保存。記録データは扱わない） */
-const CACHE = 'pon-web-0.5.0';
+const CACHE = 'pon-web-0.5.1';
 const FILES = ['./', 'index.html', 'install.html', 'privacy.html', 'manifest.webmanifest',
   'app/env.js', 'app/db.js', 'app/store.js', 'app/web.js', 'app/dashboard.js', 'app/views.js', 'app/bodies.js', 'app/perks.js', 'app/theme-boot.js', 'app/webapp.js', 'app/dashboard.css',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];

@@ -3,7 +3,8 @@
 //   node tools/build-web.mjs            … 本番URL向け
 //   PON_APP_URL=http://localhost:8000/ node tools/build-web.mjs   … 手元確認用
 // src/ の画面ファイル（拡張機能と共通）と web/ のWeb版専用ファイルから docs/ を作る
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync, readdirSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { minify } from 'terser';
@@ -20,7 +21,7 @@ mkdirSync(join(OUT, 'icons'), { recursive: true });
 // 1. 画面の共通ファイル
 for (const f of ['db.js', 'store.js', 'dashboard.js', 'views.js', 'bodies.js', 'perks.js', 'theme-boot.js', 'dashboard.css']) copyFileSync(join(SRC, f), join(OUT, 'app', f));
 for (const f of ['web.js', 'webapp.js']) copyFileSync(join(WEB, f), join(OUT, 'app', f));
-writeFileSync(join(OUT, 'app', 'env.js'), readFileSync(join(WEB, 'env.js'), 'utf8').replace('__VERSION__', VERSION));
+// env.js は本体の指紋が決まってから書く（下の 3.）
 
 // 2. index.html（拡張機能のダッシュボードをWeb版向けに変換）
 let html = readFileSync(join(SRC, 'dashboard.html'), 'utf8');
@@ -45,9 +46,31 @@ writeFileSync(join(OUT, 'index.html'), html);
 // 3. ブックマークレット
 const collector = readFileSync(join(SRC, 'perk-collect.js'), 'utf8') + '\n' + readFileSync(join(WEB, 'collector.js'), 'utf8').replace('__PON_APP_URL__', APP_URL);
 const { code } = await minify(`(async()=>{${collector}\nawait main();})();`, { compress: { passes: 2 }, mangle: true, format: { comments: false } });
-const bookmarklet = 'javascript:' + code.replace(/%/g, '%25');
+// 本体は docs/collector-<指紋>.js に置き、ブックマークレットは本体を読み込むだけの短いコードにする
+// （Androidのブックマークは長いURLが途中で切れて動かないため）。
+// ・ブックマークに本体の指紋（SRI: sha384）を書いておき、中身が1文字でも違えばブラウザが実行しない
+//   → 登録したときの中身に固定される（サイトを書き換えられても、登録済みの人には届かない）
+// ・古い本体も web/collectors/ に残して公開し続ける（登録し直していない人のブックマークも動く）
+// ・note.com は CSP の nonce 付きスクリプトだけを信頼するので、ページにある nonce を借りて読み込む
+const COLLECTOR_ID = createHash('sha256').update(code).digest('hex').slice(0, 12);
+const COLLECTOR_FILE = `collector-${COLLECTOR_ID}.js`;
+const INTEGRITY = 'sha384-' + createHash('sha384').update(code).digest('base64');
+const IS_PRODUCTION = !process.env.PON_APP_URL;
+const KEEP = join(WEB, 'collectors');
+if (IS_PRODUCTION) {
+  mkdirSync(KEEP, { recursive: true });
+  if (!existsSync(join(KEEP, COLLECTOR_FILE))) writeFileSync(join(KEEP, COLLECTOR_FILE), code);
+  for (const f of readdirSync(KEEP)) copyFileSync(join(KEEP, f), join(OUT, f));
+} else {
+  writeFileSync(join(OUT, COLLECTOR_FILE), code); // 手元確認用のビルドでは保存しない
+}
+const fullBookmarklet = 'javascript:' + code.replace(/%/g, '%25');
+writeFileSync(join(OUT, 'bookmarklet-full.txt'), fullBookmarklet);
+const loader = `(()=>{var s=document.createElement('script');s.nonce=(document.querySelector('script[nonce]')||{}).nonce||'';s.integrity='${INTEGRITY}';s.crossOrigin='anonymous';s.src='${APP_URL}${COLLECTOR_FILE}';s.onerror=function(){alert('Ponを読み込めませんでした。通信状況を確認してください。直らないときは、登録のしかたのページからコードを登録し直してください。')};document.body.appendChild(s)})();`;
+const bookmarklet = 'javascript:' + loader;
 writeFileSync(join(OUT, 'bookmarklet.txt'), bookmarklet);
-const install = readFileSync(join(WEB, 'install.template.html'), 'utf8').replace("/*__BOOKMARKLET__*/''", JSON.stringify(bookmarklet));
+writeFileSync(join(OUT, 'app', 'env.js'), readFileSync(join(WEB, 'env.js'), 'utf8').replace('__VERSION__', VERSION).replace('__COLLECTOR__', COLLECTOR_ID));
+const install = readFileSync(join(WEB, 'install.template.html'), 'utf8').replace("/*__BOOKMARKLET__*/''", JSON.stringify(bookmarklet)).replace("/*__BOOKMARKLET_FULL__*/''", JSON.stringify(fullBookmarklet));
 writeFileSync(join(OUT, 'install.html'), install);
 
 // 4. その他
@@ -56,4 +79,4 @@ copyFileSync(join(WEB, 'manifest.webmanifest'), join(OUT, 'manifest.webmanifest'
 writeFileSync(join(OUT, 'sw.js'), readFileSync(join(WEB, 'sw.js'), 'utf8').replace('__VERSION__', VERSION));
 for (const f of readdirSync(join(WEB, 'icons'))) copyFileSync(join(WEB, 'icons', f), join(OUT, 'icons', f));
 writeFileSync(join(OUT, '.nojekyll'), '');
-console.log(`docs/ を作成しました（v${VERSION}、ブックマークレット ${bookmarklet.length} 文字、APP_URL=${APP_URL}）`);
+console.log(`docs/ を作成しました（v${VERSION}、ブックマークレット ${bookmarklet.length} 文字（本体 ${COLLECTOR_FILE} ${code.length} 文字）、APP_URL=${APP_URL}）`);

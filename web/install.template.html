@@ -35,6 +35,7 @@
       <li>ブックマークの「<b>Ponで記録</b>」をタップ（数秒〜数十秒）</li>
       <li>自動で <a href="./">Web版Pon</a> に切り替わり、データが追加される</li>
     </ol>
+    <p class="hint">登録するのは短いコードで、実行するたびに、このサイトからPonのプログラム本体を読み込んで動きます。コードには本体の「指紋」が入っていて、登録したときと中身が1文字でも違う本体は、ブラウザが実行しません。そのため、あとからサイトが書き換えられても、あなたのnoteで知らないプログラムが動くことはありません。Ponの記録の仕組みが新しくなったときは、Web版Ponの画面でお知らせするので、このページからコードを登録し直してください。</p>
     <p class="hint">取得するのは自分のアカウントのデータだけです。データは<b>あなたのブラウザの中にだけ</b>保存され、外部のサーバーには送りません（受け渡しに使うURLの「#」より後ろは、サーバーに送られない仕組みです）。noteへのアクセスは1秒以上の間隔をあけて行います。</p>
   </div>
 
@@ -43,6 +44,11 @@
     <p>下の「コードをコピー」を押してください。次の手順で、ブックマークのURLとして貼り付けます。</p>
     <textarea class="code" id="code" readonly></textarea>
     <p class="btn-row"><button class="btn primary" id="copy">コードをコピー</button> <span class="meta" id="copied"></span></p>
+    <details class="more">
+      <summary>外部から読み込まない版（パソコン向け）</summary>
+      <p class="hint">プログラム全体をブックマークに入れる長い版です。このサイトから読み込まずに動きます。記録の仕組みが新しくなったときは、同じように登録し直してください。スマホ（特にAndroid）では長すぎて途中で切れ、動かないことがあります。</p>
+      <textarea class="code" id="codeFull" readonly></textarea>
+    </details>
   </div>
 
   <div class="card">
@@ -94,6 +100,7 @@
 <script>
   const CODE = /*__BOOKMARKLET__*/'';
   document.getElementById('code').value = CODE;
+  document.getElementById('codeFull').value = /*__BOOKMARKLET_FULL__*/'';
   document.getElementById('drag').href = CODE;
   document.getElementById('drag').addEventListener('click', (e) => { e.preventDefault(); alert('このボタンはクリックせず、ブックマークバーにドラッグしてください。'); });
   document.getElementById('copy').addEventListener('click', async () => {

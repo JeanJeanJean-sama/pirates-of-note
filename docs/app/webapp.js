@@ -57,6 +57,8 @@ async function importFromHash() {
   await requestPersist();
   await load();
   if (window.PonPerks) await window.PonPerks.reload();
+  await NDB.kvSet('collectorOutdated', !!(data.cid && self.PON_COLLECTOR && data.cid !== self.PON_COLLECTOR));
+  showCollectorNotice();
   toast(`記録しました（${data.snapshot.items.length}記事${data.unreplied ? `、コメント確認 ${data.unreplied.length}記事` : ''}）`);
 }
 
@@ -114,11 +116,26 @@ const origBackup = ACTIONS['json-backup'];
 ACTIONS['json-backup'] = async (btn) => { await origBackup(btn); await markBackedUp(); };
 ACTIONS['run-now'] = () => { window.open('https://note.com/', '_blank', 'noopener'); toast('noteのページで「Ponで記録」をタップしてください。'); };
 $$('.importFileAlt').forEach((i) => i.addEventListener('change', (e) => { if (e.target.files[0]) importBackup(e.target.files[0]); e.target.value = ''; }));
+/** ブックマークレットが古い本体のままなら、登録し直しを案内する */
+async function showCollectorNotice() {
+  const outdated = await NDB.kvGet('collectorOutdated', false);
+  let el = document.getElementById('collectorNotice');
+  if (!outdated) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'collectorNotice'; el.className = 'card banner';
+    el.innerHTML = '<p><b>「Ponで記録」の新しい版があります。</b>いまの登録のままでも記録はできますが、新しい機能や修正を使うには、コードを登録し直してください。</p><p><a class="btn primary" href="install.html">登録のしかたを開く</a></p>';
+    const ov = document.getElementById('tab-overview');
+    ov.insertBefore(el, ov.firstChild);
+  }
+}
+
 addEventListener('hashchange', importFromHash);
 
 (async () => {
   await importFromHash();
   renderBackupBanner();
+  showCollectorNotice();
   PonWeb.updateTitle();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

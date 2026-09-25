@@ -3,7 +3,7 @@
   "name": "Pirates of note（非公式）",
   "short_name": "Pon",
   "description": "自分のnoteのアクセス数値を記録・分析する非公式ツール。毎日の推移、伸びた記事、未返信コメント、自分が書いたコメントを記録します。データはブラウザ内にだけ保存します。",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "minimum_chrome_version": "116",
   "permissions": [
     "storage",

@@ -9,6 +9,8 @@
  * ・認証トークンは note との通信にだけ使い、Web版にも渡さない
  * ============================================================ */
 const APP_URL = '__PON_APP_URL__';
+// 読み込まれたファイル名から、本体の指紋を知る（最初に同期的に読む必要がある）
+const SELF_ID = ((document.currentScript && document.currentScript.src) || '').match(/collector-([0-9a-f]+)\.js/)?.[1] || '';
 const STATE_KEY = 'pon.web.v1';
 const INTERVAL_MS = 1000;
 const MAX_NOTICE_PAGES = 25;
@@ -237,7 +239,7 @@ async function main() {
     if (ui.state.cancelled) return;
 
     ui.set('Ponに渡しています…');
-    const payload = { app: 'pon-web', v: 1, me, snapshot, unreplied, myComments: n.myComments, threadReplies: n.threadReplies,
+    const payload = { app: 'pon-web', v: 1, cid: SELF_ID, me, snapshot, unreplied, myComments: n.myComments, threadReplies: n.threadReplies,
       perk: perk ? { ...perk, scannedKeys: undefined } : null,
       logs: ui.state.skipComments ? [{ level: 'info', message: 'コメント確認の残りは次回に後回しにしました' }] : [] };
     const encoded = await encodePayload(payload);
