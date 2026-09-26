@@ -1,6 +1,6 @@
 # プライバシーポリシー — Pirates of note（非公式）
 
-最終更新日：2026年9月25日
+最終更新日：2026年9月26日
 
 ## 取得する情報
 
@@ -29,6 +29,6 @@ noteのアカウント情報のうち、メールアドレスなど上記以外�
 
 ## お問い合わせ
 
-- メール：（専用のメールアドレスを記入）
+- メール：remmusnaej@gmail.com
 - 不具合報告：https://github.com/jeanjeanjean-sama/pirates-of-note/issues
 - note：https://note.com/jeanjeanjean （DMでも受け付けます）

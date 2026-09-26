@@ -122,7 +122,7 @@ docs/             GitHub Pages で公開するWeb版（build-web.mjs で作る�
 
 ## 不具合報告・要望
 
-[Issues](https://github.com/jeanjeanjean-sama/pirates-of-note/issues)、または作者のnoteまでお寄せください。
+[Issues](https://github.com/jeanjeanjean-sama/pirates-of-note/issues)、メール（remmusnaej@gmail.com）、または作者のnoteまでお寄せください。
 
 ## ライセンス
 
