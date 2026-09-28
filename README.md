@@ -141,4 +141,4 @@ docs/             GitHub Pages で公開するWeb版（build-web.mjs で作る�
 
 ## ライセンス
 
-[MIT License](LICENSE)
+[MIT License](LICENSE) © 2026 Jean=Summer
