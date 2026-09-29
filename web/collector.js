@@ -30,7 +30,7 @@ function panel() {
   const box = document.createElement('div');
   box.id = UI_ID;
   box.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;max-width:420px;margin:0 auto;background:#1e56a0;color:#fff;font:14px/1.6 system-ui,sans-serif;padding:14px 16px;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.35);';
-  box.innerHTML = '<div style="font-weight:700;margin-bottom:4px">⚓ Ponで記録</div><div data-t style="white-space:pre-wrap"></div><div data-b style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px"></div>';
+  box.innerHTML = '<div style="font-weight:700;margin-bottom:4px">🧭 Ponで記録</div><div data-t style="white-space:pre-wrap"></div><div data-b style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px"></div>';
   document.body.appendChild(box);
   const t = box.querySelector('[data-t]'), b = box.querySelector('[data-b]');
   const state = { skipComments: false, cancelled: false };
@@ -199,7 +199,16 @@ async function main() {
     const cu = (await getJson('/api/v2/current_user')).data;
     if (!cu || !cu.urlname) throw new Error('noteにログインしてから実行してください。');
     const me = { urlname: cu.urlname, nickname: cu.nickname || cu.urlname, followerCount: cu.follower_count ?? null };
-    if (st.urlname && st.urlname !== me.urlname) st = { checked: {} }; // 別アカウントに切り替えた
+    // 記録するアカウントの確認（v0.6.0 ⑫）：前に記録したアカウントと違えば、何も取得しない
+    const remembered = String(st.account || st.urlname || '').toLowerCase();
+    if (remembered && remembered !== String(me.urlname).toLowerCase()) {
+      ui.set(`別のアカウント（@${me.urlname}）でログインしています。\nこのブラウザで前に記録したのは @${remembered} です。記録が混ざらないように、何も記録しませんでした。\n\n（Web版Ponの「記録するアカウント」が @${me.urlname} のときだけ、右のボタンを押してください。違うときは、押してもWeb版Ponの側で取り込みを止めます）`);
+      const go = await new Promise((res) => ui.buttons([['閉じる', () => { ui.close(); res(false); }], [`@${me.urlname} で記録する`, () => res(true)]]));
+      if (!go) return;
+      st = { checked: {} }; // 別のアカウントの「どこまで確認したか」は使わない
+      ui.buttons([['中止', () => { ui.state.cancelled = true; ui.close(); }]]);
+    }
+    st.account = String(me.urlname).toLowerCase();
     st.urlname = me.urlname;
 
     ui.set('記事の数値を取得中…');

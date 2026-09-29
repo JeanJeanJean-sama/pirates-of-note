@@ -4,7 +4,7 @@
  * ============================================================ */
 'use strict';
 
-const V = { view: 'cards', stage: 'entry', order: 'new', map: 'a', shown: 40, trendOpen: new Set(), recheckAt: 0, rechecking: false };
+const V = { view: 'cards', stage: 'entry', order: 'new', map: 'a', shown: 40, recheckAt: 0, rechecking: false };
 const RECENT_DAYS = 30;
 
 /* ---------- 共通 ---------- */
@@ -30,6 +30,21 @@ function articleRows() {
   });
 }
 
+/* ---------- 見出し画像（v0.6.0 ④）----------
+ * 記録した本文（bodies）の eyecatch のURLを <img> で表示するだけ（画像は取り込まない・権限も足さない）。
+ * 本文を記録していない記事は枠だけ。読み込めなかったときも枠だけにする。 */
+function eyecatchOf(r) {
+  const u = (r && r.eyecatch) || (window.PonBodies && window.PonBodies.eyecatch ? window.PonBodies.eyecatch(r.key) : '');
+  return /^https:\/\//.test(u || '') ? u : '';
+}
+function eyeHtml(r) {
+  const u = eyecatchOf(r);
+  return `<a class="athumb" href="${esc(r.url)}" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true">${u ? `<img src="${esc(u)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : ''}</a>`;
+}
+
+// 読み込めなかった画像は消して枠だけにする（拡張機能の画面は onerror 属性が使えないため、まとめて受け取る）
+document.addEventListener('error', (e) => { const t = e.target; if (t && t.tagName === 'IMG' && t.closest && t.closest('.athumb, .eyecatch')) t.remove(); }, true);
+
 /* ---------- 記事カード ---------- */
 function renderCards() {
   const list = $('#cardList');
@@ -39,7 +54,7 @@ function renderCards() {
   $('#tableWrap').hidden = V.view !== 'table';
   $('#stageSeg').hidden = V.view !== 'cards';
   $('#orderSeg').hidden = V.view !== 'cards';
-  if (V.view !== 'cards') { $('#cardMore').hidden = true; return; }
+  if (V.view !== 'cards') { $('#cardMore').hidden = true; if ($('#trendControls')) $('#trendControls').hidden = true; return; }
 
   let rows = articleRows();
   if (!rows.length) { list.innerHTML = '<p class="meta">まだデータがありません。</p>'; $('#cardMore').hidden = true; return; }
@@ -68,47 +83,33 @@ function renderCards() {
       <span class="mbar"><span class="fill ${cls}" style="width:${logPct(v, max).toFixed(1)}%"></span><span class="med" style="left:${logPct(med, max).toFixed(1)}%" title="中央値 ${fmt(Math.round(med))}"></span></span>
       <span class="mval">${fmt(v)}</span><span class="mdelta ${d > 0 ? 'up' : ''}">${d == null ? '–' : signed(d)}</span></div>`;
 
+  if (V.focusKey) { const fi = rows.findIndex((r) => r.key === V.focusKey); if (fi >= V.shown) V.shown = Math.ceil((fi + 1) / 40) * 40; }
   const shown = rows.slice(0, V.shown);
+  const showEye = S.settings.showEyecatch !== false;
+  if (typeof PonCardTrend !== 'undefined') PonCardTrend.setOrder(rows.map((r) => r.key));
   list.innerHTML = (noPrev ? '<p class="meta">前回との差は、2日目の記録から表示されます。</p>' : '') + shown.map((r) => {
     const rate = r[rateKey];
     const rateCls = rate == null ? '' : rate >= medRate ? 'up' : '';
     return `<article class="acard" data-key="${esc(r.key)}">
-      <div class="ahead"><a class="atitle" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>
-        <div class="ameta">${fmtDate(r.publishedAt)}　<a href="${esc(r.url)}" target="_blank" rel="noopener">noteで開く ↗</a></div></div>
+      <div class="ahead${showEye ? ' with-eye' : ''}">${showEye ? eyeHtml(r) : ''}<div class="ahead-text"><a class="atitle" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>
+        <div class="ameta">${fmtDate(r.publishedAt)}　<a href="${esc(r.url)}" target="_blank" rel="noopener">noteで開く ↗</a></div></div></div>
       ${bar(entry ? 'IMP' : 'PV', entry ? 'c-imp' : 'c-pv', r[m1], max1, med1, r[entry ? 'dimp' : 'dpv'])}
       ${bar(entry ? 'PV' : 'スキ', entry ? 'c-pv' : 'c-like', r[m2], max2, med2, r[entry ? 'dpv' : 'dlike'])}
       ${entry ? '' : `<div class="mrow"><span class="mlabel">コメント</span><span class="mbar none"></span><span class="mval">${fmt(r.comment)}</span><span class="mdelta">${r.dcomment == null ? '–' : signed(r.dcomment)}</span></div>`}
       <div class="afoot"><span class="rate"><span class="rlabel">${entry ? '開封率' : 'スキ率'}</span><span class="rvalue ${rateCls}">${pct(rate)}</span><span class="meta">中央値 ${pct(medRate)}</span></span>
         <span class="btn-row">${self.PON_ENV === 'web' && !(window.PonBodies && window.PonBodies.has(r.key)) ? '' : `<button class="btn small dl" data-body-dl="${esc(r.key)}" title="この記事の本文を、パソコンの「ダウンロード」フォルダにCSVファイルで保存します">⬇ 本文をダウンロード（CSV）</button>`}
-        <button class="btn small" data-trend="${esc(r.key)}">${V.trendOpen.has(r.key) ? '推移を閉じる' : '推移を見る →'}</button></span></div>
-      ${V.trendOpen.has(r.key) ? `<div class="atrend">${trendSvg(r.key, entry ? 'pv' : 'like')}</div>` : ''}
+        ${typeof PonCardTrend !== 'undefined' ? PonCardTrend.bigButton(r.key) : ''}</span></div>
+      ${typeof PonCardTrend !== 'undefined' ? PonCardTrend.slot(r.key) : ''}
     </article>`;
   }).join('');
   $('#cardMore').hidden = rows.length <= V.shown;
-}
-
-/** 記事ごとの推移（記録ごとの増えた数） */
-function trendSvg(key, metric) {
-  const pts = [];
-  for (let i = 1; i < S.snapshots.length; i++) {
-    const a = S.snapshots[i - 1].items.find((x) => x.key === key);
-    const b = S.snapshots[i].items.find((x) => x.key === key);
-    if (a && b) pts.push({ date: S.snapshots[i].date, v: b[metric] - a[metric] });
+  if (V.focusKey) {
+    // 検索の結果から来たとき：その記事のカードまで動いて、少しのあいだ目立たせる
+    const el = list.querySelector(`[data-key="${CSS.escape(V.focusKey)}"]`);
+    V.focusKey = null;
+    if (el) { requestAnimationFrame(() => el.scrollIntoView({ block: 'start' })); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 2500); const a = el.querySelector('.atitle'); if (a) a.focus({ preventScroll: true }); }
   }
-  const label = metric === 'pv' ? 'PV' : 'スキ';
-  if (pts.length < 1) return `<p class="meta">2日分の記録がたまると、この記事の${label}の増え方が表示されます。</p>`;
-  const W = 560, H = 120, m = { l: 36, r: 8, t: 8, b: 20 };
-  const max = Math.max(1, ...pts.map((p) => p.v));
-  const bw = Math.max(2, Math.min(24, (W - m.l - m.r) / pts.length - 3));
-  const x = (i) => m.l + (i + 0.5) * ((W - m.l - m.r) / pts.length);
-  const y = (v) => m.t + (H - m.t - m.b) * (1 - Math.max(0, v) / max);
-  return `<svg viewBox="0 0 ${W} ${H}" class="mini" role="img" aria-label="${label}の増えた数の推移">
-    <line class="baseline" x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}"/>
-    <text class="axis-t" x="${m.l - 6}" y="${y(max) + 4}" text-anchor="end">${fmt(max)}</text><text class="axis-t" x="${m.l - 6}" y="${y(0) + 4}" text-anchor="end">0</text>
-    ${pts.map((p, i) => `<rect class="mbar-fill ${metric === 'like' ? 'like' : ''}" x="${(x(i) - bw / 2).toFixed(1)}" y="${y(p.v).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0, y(0) - y(p.v)).toFixed(1)}" rx="2"><title>${p.date}：${signed(p.v)}</title></rect>`).join('')}
-    <text class="axis-t" x="${x(0)}" y="${H - 4}" text-anchor="middle">${pts[0].date.slice(5).replace('-', '/')}</text>
-    ${pts.length > 1 ? `<text class="axis-t" x="${x(pts.length - 1)}" y="${H - 4}" text-anchor="middle">${pts[pts.length - 1].date.slice(5).replace('-', '/')}</text>` : ''}
-  </svg><p class="meta">記録ごとの${label}の増えた数</p>`;
+  if (typeof PonCardTrend !== 'undefined') { PonCardTrend.renderControls(); PonCardTrend.observe(list); }
 }
 
 /* ---------- マップ（散布図・両対数） ---------- */
@@ -180,6 +181,7 @@ function renderMap() {
 async function recheckUnreplied({ force = false } = {}) {
   if (self.PON_ENV === 'web') return; // Web版はブラウザの制限で note に直接アクセスできない（記録時に更新）
   if (V.rechecking || !S.me) return;
+  if (!force && S.settings.checkComments === false) return; // 「未返信コメントを確認する」がOFFなら自動では確かめない（ボタンを押したときだけ）
   if (!force && Date.now() - V.recheckAt < 20000) return;
   const targets = S.unreplied.filter((u) => (u.pending || []).some((c) => !S.dismissed[c.commentKey]));
   if (!targets.length) return;
@@ -235,12 +237,6 @@ function bindViews() {
   segBind('#orderSeg', 'order', 'order', () => { V.shown = 40; renderCards(); });
   segBind('#mapSeg', 'map', 'map', renderMap);
   $('#articleSearch').addEventListener('input', () => { V.shown = 40; renderCards(); });
-  $('#cardList').addEventListener('click', (e) => {
-    const k = e.target.dataset && e.target.dataset.trend;
-    if (!k) return;
-    if (V.trendOpen.has(k)) V.trendOpen.delete(k); else V.trendOpen.add(k);
-    renderCards();
-  });
   ACTIONS['more-cards'] = () => { V.shown += 40; renderCards(); };
   ACTIONS.recheck = () => recheckUnreplied({ force: true });
   $$('.tabs button').forEach((b) => b.addEventListener('click', () => {
@@ -256,6 +252,15 @@ function bindViews() {
 
 window.PonViews = {
   refreshCards() { renderCards(); },
+  /** 記事カードへ移動（⑦ 検索の結果から） */
+  focus(key) {
+    const tab = $('.tabs button[data-tab="articles"]');
+    if (tab && tab.getAttribute('aria-selected') !== 'true') tab.click();
+    if (V.view !== 'cards') { const b = $('[data-view="cards"]'); if (b) b.click(); }
+    const s = $('#articleSearch'); if (s && s.value) { s.value = ''; S.search = ''; }
+    V.focusKey = key;
+    renderCards();
+  },
   render() { renderCards(); if (!$('#tab-map').hidden) renderMap(); if (!$('#tab-comments').hidden) recheckUnreplied(); },
 };
 bindViews();

@@ -19,7 +19,7 @@ mkdirSync(join(OUT, 'app'), { recursive: true });
 mkdirSync(join(OUT, 'icons'), { recursive: true });
 
 // 1. 画面の共通ファイル
-for (const f of ['db.js', 'store.js', 'dashboard.js', 'views.js', 'bodies.js', 'perks.js', 'theme-boot.js', 'dashboard.css']) copyFileSync(join(SRC, f), join(OUT, 'app', f));
+for (const f of ['db.js', 'store.js', 'dashboard.js', 'periods.js', 'views.js', 'cardtrend.js', 'share.js', 'search.js', 'calendar.js', 'missions.js', 'features.js', 'account.js', 'bodies.js', 'perks.js', 'theme-boot.js', 'dashboard.css']) copyFileSync(join(SRC, f), join(OUT, 'app', f));
 for (const f of ['web.js', 'webapp.js']) copyFileSync(join(WEB, f), join(OUT, 'app', f));
 // env.js は本体の指紋が決まってから書く（下の 3.）
 
@@ -34,9 +34,18 @@ must('<link rel="stylesheet" href="dashboard.css">', [
   '<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">',
   '<link rel="stylesheet" href="app/dashboard.css">',
 ].join('\n'));
-must('<script src="db.js"></script>', '<script src="app/env.js"></script>\n<script src="app/db.js"></script>\n<script src="app/store.js"></script>\n<script src="app/web.js"></script>');
+must('<script src="db.js"></script>', '<script src="app/env.js"></script>\n<script src="app/db.js"></script>');
+must('<script src="store.js"></script>', '<script src="app/store.js"></script>\n<script src="app/web.js"></script>');
 must('<script src="dashboard.js"></script>', '<script src="app/dashboard.js"></script>');
+must('<script src="periods.js"></script>', '<script src="app/periods.js"></script>');
 must('<script src="views.js"></script>', '<script src="app/views.js"></script>');
+must('<script src="cardtrend.js"></script>', '<script src="app/cardtrend.js"></script>');
+must('<script src="share.js"></script>', '<script src="app/share.js"></script>');
+must('<script src="search.js"></script>', '<script src="app/search.js"></script>');
+must('<script src="calendar.js"></script>', '<script src="app/calendar.js"></script>');
+must('<script src="missions.js"></script>', '<script src="app/missions.js"></script>');
+must('<script src="features.js"></script>', '<script src="app/features.js"></script>');
+must('<script src="account.js"></script>', '<script src="app/account.js"></script>');
 must('<script src="bodies.js"></script>', '<script src="app/bodies.js"></script>');
 must('<script src="perks.js"></script>', '<script src="app/perks.js"></script>\n<script src="app/webapp.js"></script>');
 must('<script src="theme-boot.js"></script>', '<script src="app/theme-boot.js"></script>');

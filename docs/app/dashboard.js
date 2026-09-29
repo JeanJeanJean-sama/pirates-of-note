@@ -28,7 +28,7 @@ async function load() {
   S.threadReplies = Object.values(threads).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
   S.commentCheckIncomplete = incomplete;
   S.snapshots = snapshots.sort((a, b) => a.date.localeCompare(b.date));
-  Object.assign(S, { me, unreplied, dismissed, myComments, logs, settings: { autoCollect: true, checkComments: true, recordMyComments: true, saveBodies: true, ...settings } });
+  Object.assign(S, { me, unreplied, dismissed, myComments, logs, settings: { autoCollect: true, checkComments: true, recordMyComments: true, saveBodies: true, perkCheck: true, ...settings } });
   renderAll();
 }
 
@@ -40,6 +40,12 @@ function renderAll() {
   renderData();
   if (window.PonViews) window.PonViews.render();
   if (window.PonPerks) window.PonPerks.render();
+  if (window.PonBodies && window.PonBodies.renderExport && !$('#tab-data').hidden) window.PonBodies.renderExport();
+  if (typeof PonSearch !== 'undefined') PonSearch.render();
+  if (typeof PonCalendar !== 'undefined') PonCalendar.render();
+  if (typeof PonMissions !== 'undefined') PonMissions.render();
+  if (typeof PonFeatures !== 'undefined') PonFeatures.apply();
+  if (typeof PonAccount !== 'undefined') PonAccount.render();
 }
 
 const latest = () => S.snapshots[S.snapshots.length - 1] || null;
@@ -50,7 +56,7 @@ function renderOverview() {
   const cur = latest(), prev = previous();
   $('#emptyState').hidden = !!cur;
   $('#kpis').innerHTML = '';
-  if (!cur) { $('#chart').innerHTML = ''; $('#growthList').innerHTML = ''; $('#snapMeta').textContent = ''; return; }
+  if (!cur) { $('#chart').innerHTML = ''; $('#growthList').innerHTML = ''; $('#snapMeta').textContent = ''; if (typeof PonPeriods !== 'undefined') PonPeriods.render(); return; }
 
   const span = prev ? daysBetween(prev.date, cur.date) : 0;
   const tiles = [
@@ -70,7 +76,7 @@ function renderOverview() {
   $('#snapMeta').textContent = `数値はすべて全期間の累計です。　最終記録: ${fmtDateTime(cur.capturedAt)}　／　noteの集計時刻: ${cur.statUpdatedAt ? fmtDateTime(cur.statUpdatedAt) : '–'}　／　記録日数: ${S.snapshots.length}日`;
 
   renderChart();
-  renderGrowth(cur, prev, span);
+  if (typeof PonPeriods !== 'undefined') PonPeriods.render(); else renderGrowth(cur, prev, span);
 }
 
 function seriesData() {
@@ -290,7 +296,7 @@ const ACTIONS = {
   'json-backup': async () => {
     const dump = { app: BACKUP_APP, version: 1, appVersion: ponVersion(), exportedAt: new Date().toISOString(), stores: {} };
     for (const st of ['snapshots', 'unreplied', 'myComments', 'bodies']) dump.stores[st] = await NDB.getAll(st);
-    dump.kv = { me: S.me, settings: S.settings, dismissed: S.dismissed, threadReplies: await NDB.kvGet('threadReplies', {}), profile: await NDB.kvGet('profile', null), perk: await NDB.kvGet('perk', null) };
+    dump.kv = { me: S.me, settings: S.settings, dismissed: S.dismissed, threadReplies: await NDB.kvGet('threadReplies', {}), profile: await NDB.kvGet('profile', null), perk: await NDB.kvGet('perk', null), plans: await NDB.kvGet('plans', []), missions: await NDB.kvGet('missions', []), recordAccount: await PonStore.recordAccount() };
     download(`pon-backup-${jstDate()}.json`, JSON.stringify(dump), 'application/json');
   },
   wipe: async () => {
@@ -306,6 +312,7 @@ async function importBackup(file) {
   try {
     const dump = JSON.parse(await file.text());
     if (!BACKUP_APPS.includes(dump.app) || !dump.stores) throw new Error('このツールのバックアップファイルではありません。');
+    if (typeof PonAccount !== 'undefined' && !(await PonAccount.confirmBackupAccount(dump))) return;
     if (!confirm(`バックアップ（${fmtDateTime(dump.exportedAt)} 作成）を読み込みます。同じ日付のデータは上書きされ、それ以外は残ります。よろしいですか？`)) return;
     for (const st of ['snapshots', 'unreplied', 'myComments', 'bodies']) if (Array.isArray(dump.stores[st])) await NDB.putMany(st, dump.stores[st]);
     if (dump.kv) {
@@ -315,7 +322,17 @@ async function importBackup(file) {
       if (dump.kv.threadReplies) await NDB.kvSet('threadReplies', { ...dump.kv.threadReplies, ...(await NDB.kvGet('threadReplies', {})) });
       if (dump.kv.profile) await NDB.kvSet('profile', dump.kv.profile);
       if (dump.kv.perk && !(await NDB.kvGet('perk', null))) await NDB.kvSet('perk', dump.kv.perk);
+      // v0.6.0：カレンダーの予定（同じ id は上書き、それ以外は残す）
+      // v0.6.0：カレンダーの予定・セルフミッション（同じ id は上書き、それ以外は残す）
+      for (const key of ['plans', 'missions']) {
+        if (!Array.isArray(dump.kv[key])) continue;
+        const cur = await NDB.kvGet(key, []);
+        const byId = new Map(cur.map((p) => [p.id, p]));
+        for (const p of dump.kv[key]) if (p && p.id) byId.set(p.id, p);
+        await NDB.kvSet(key, [...byId.values()]);
+      }
     }
+    if (typeof PonAccount !== 'undefined') await PonAccount.afterRestore(dump);
     await chrome.runtime.sendMessage({ type: 'REFRESH_BADGE' });
     alert('復元しました。');
     await load();

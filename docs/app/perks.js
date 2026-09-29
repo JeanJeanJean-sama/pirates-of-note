@@ -12,16 +12,26 @@
   const CAPTAIN_NAME = 'ジァン=サマー';
   const QUOTE_RE = /note\.com\/jeanjeanjean\/n\/n[0-9a-z]+/i;
   const MAX_TITLE = 16;
+  const MAX_EPITHET = 12;
+  /** 二つ名の候補（v0.6.0 ⑧）。作品の固有の呼び名は並べず、一般的な言葉だけにする（2026/9/29 利用者が決定） */
+  const EPITHET_IDEAS = ['鉄壁の', '暴君', '大参謀', '鉄拳の', '道化の', '泥棒猫', '船斬り'];
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const isWeb = () => self.PON_ENV === 'web';
+  /** Pon のロゴ（コンパス。brand/pon-logo.svg と同じ形。v0.6.0） */
+  const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Pon"><defs><linearGradient id="ponlg" gradientUnits="userSpaceOnUse" x1="14" y1="86" x2="86" y2="14"><stop offset="0" stop-color="#14c3ea"/><stop offset="0.5" stop-color="#3a7df6"/><stop offset="1" stop-color="#7b57f2"/></linearGradient><mask id="ponlm" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100"><circle cx="50" cy="50" r="37.8" fill="none" stroke="#fff" stroke-width="4.6"/><path d="M50.00,3.00L44.75,33.50L55.25,33.50Z M50.00,97.00L55.25,66.50L44.75,66.50Z M98.00,50.00L70.50,44.75L70.50,55.25Z M2.00,50.00L29.50,55.25L29.50,44.75Z M81.11,18.89L68.10,28.79L71.21,31.90Z M81.11,81.11L71.21,68.10L68.10,71.21Z M18.89,81.11L31.90,71.21L28.79,68.10Z M18.89,18.89L28.79,31.90L31.90,28.79Z" fill="#000" stroke="#000" stroke-width="2.6" stroke-linejoin="round"/><circle cx="50" cy="50" r="27.8" fill="none" stroke="#fff" stroke-width="2.7"/><path d="M50.00,3.00L44.75,33.50L55.25,33.50Z M50.00,97.00L55.25,66.50L44.75,66.50Z M98.00,50.00L70.50,44.75L70.50,55.25Z M2.00,50.00L29.50,55.25L29.50,44.75Z" fill="#000" stroke="#000" stroke-width="2.6" stroke-linejoin="round"/><path d="M50.00,3.00L44.75,33.50L55.25,33.50Z M50.00,97.00L55.25,66.50L44.75,66.50Z M98.00,50.00L70.50,44.75L70.50,55.25Z M2.00,50.00L29.50,55.25L29.50,44.75Z M81.11,18.89L68.10,28.79L71.21,31.90Z M81.11,81.11L71.21,68.10L68.10,71.21Z M18.89,81.11L31.90,71.21L28.79,68.10Z M18.89,18.89L28.79,31.90L31.90,28.79Z" fill="#fff"/><g transform="translate(30.200 38.580) scale(0.018828) translate(-35.0 -36.0)"><g transform="translate(0.000000,1302.000000) scale(0.100000,-0.100000)" fill="#fff" stroke="none"><path d="M376 12639 l-26 -20 0 -6043 0 -6043 21 -27 20 -26 1274 0 c1238 0 1273 1 1296 19 l24 19 5 1697 5 1697 23 18 c22 18 77 19 1285 23 1416 5 1443 6 1897 82 670 112 1349 375 1875 728 380 254 756 594 1040 942 688 840 1101 1139 1769 1278 148 30 156 31 426 31 271 0 277 -1 425 -32 329 -71 590 -186 867 -384 103 -74 129 -65 163 57 162 590 482 1195 927 1753 54 68 98 131 98 141 0 58 -341 267 -640 392 -469 196 -923 311 -1382 350 -177 16 -836 5 -953 -15 -49 -8 -142 -22 -205 -31 -63 -9 -158 -27 -210 -41 -52 -13 -101 -24 -110 -24 -22 0 -238 -61 -347 -99 -50 -17 -106 -31 -125 -31 -58 0 -67 20 -94 207 -113 807 -488 1563 -1058 2137 -175 176 -410 364 -626 500 -107 68 -358 216 -366 216 -2 0 -50 23 -106 51 -549 272 -1249 446 -1968 489 -100 6 -1156 10 -2681 10 l-2516 0 -27 -21z m5044 -2319 c466 -48 858 -215 1177 -499 295 -263 501 -685 553 -1136 89 -760 -147 -1478 -620 -1891 -275 -239 -558 -373 -960 -454 -215 -43 -391 -49 -1561 -50 -963 0 -966 0 -993 21 l-26 20 0 1978 c0 1691 2 1980 14 1997 13 17 32 19 238 25 370 10 2061 2 2178 -11z M17310 9290 c-115 -9 -512 -67 -545 -80 -13 -5 -64 -17 -112 -26 -517 -96 -1189 -401 -1598 -723 -601 -475 -1049 -1070 -1317 -1751 -45 -115 -165 -484 -178 -548 -7 -31 -20 -88 -31 -127 -10 -38 -27 -128 -39 -199 -11 -71 -22 -132 -25 -136 -3 -4 -14 -99 -25 -211 -11 -112 -22 -213 -25 -224 -2 -11 -9 -139 -15 -285 -14 -359 -27 -499 -61 -670 -120 -601 -390 -1040 -810 -1318 -124 -82 -442 -232 -492 -232 -7 0 -51 -11 -98 -25 -179 -53 -569 -75 -814 -47 -270 32 -625 152 -828 280 -325 206 -526 424 -713 772 -117 218 -155 320 -223 600 -16 63 -32 123 -36 133 -15 36 -54 19 -143 -61 -370 -330 -924 -691 -1396 -908 -161 -74 -451 -188 -560 -218 -62 -18 -106 -53 -106 -84 0 -36 53 -168 165 -412 162 -352 481 -797 805 -1121 353 -353 860 -695 1360 -917 238 -106 617 -226 855 -272 55 -10 120 -23 145 -29 45 -11 268 -39 520 -66 158 -17 670 -20 855 -5 454 37 1010 149 1286 258 30 12 107 42 171 66 441 169 960 496 1314 827 397 372 766 889 951 1334 131 315 176 451 248 755 96 407 112 539 140 1185 18 411 26 504 61 685 73 380 198 676 378 895 256 313 479 454 851 538 137 31 146 31 385 31 240 0 248 -1 380 -32 348 -82 569 -215 784 -472 247 -295 375 -631 440 -1150 l26 -206 0 -2265 c0 -1650 3 -2275 11 -2298 7 -19 22 -36 36 -42 14 -5 529 -9 1274 -9 l1250 0 24 25 25 24 0 2363 c0 2599 1 2556 -61 2968 -17 113 -42 248 -55 300 -13 52 -24 102 -24 110 0 20 -65 256 -95 345 -13 39 -33 102 -45 140 -78 255 -272 652 -452 930 -197 303 -516 633 -853 882 -150 110 -498 303 -675 373 -307 122 -563 204 -749 241 -52 10 -109 23 -125 29 -47 15 -419 68 -562 80 -141 11 -707 11 -854 0z"/></g></g></mask></defs><rect width="100" height="100" fill="url(#ponlg)" mask="url(#ponlm)"/></svg>';
 
   /* ---------- 称号 ---------- */
   const GROUPS = [
     { name: '海賊', titles: ['見習い水夫', '甲板員', '見張り番', '砲撃手', '狙撃手', '操舵手', '航海士', '船医', 'コック', '音楽家', '考古学者', '船大工', '副船長', '船長', '大海賊', '伝説の海賊'] },
-    { name: '海軍', titles: ['海軍二等兵', '海軍軍曹', '海軍少尉', '海軍大尉', '海軍大佐', '海軍少将', '海軍中将', '海軍大将', '元帥'] },
+    { name: '海軍', titles: ['海軍二等兵', '海軍軍曹', '海軍少尉', '海軍大尉', '海軍大佐', '海軍少将', '海軍中将', '海軍大将'] },
     { name: '海の住人', titles: ['賞金稼ぎ', '情報屋', '灯台守', '冒険家', '革命家', '謎の旅人', '酒場の主人', '造船技師', '密航者', '人魚の友'] },
   ];
+
+  /** 元帥・大元帥：noteの加藤貞顕さん（@sadaaki）と深津貴之さん（@fladdict）だけが名乗れる（v0.6.0）。
+   *  判定は noteの自分のID（urlname）で行う。作者本人（海賊王）も名乗れない。 */
+  const ADMIRALS = ['sadaaki', 'fladdict'];
+  const ADMIRAL_TITLES = ['大元帥', '元帥'];
 
   /** 特別な称号（解放条件つき）。need(u) が true なら使える */
   const SPECIALS = [
@@ -39,7 +49,7 @@
 
   /* ---------- 着せ替え ---------- */
   const THEMES = [
-    { id: 'standard', name: '標準',         logo: '⚓', desc: 'いつものPon',                         need: () => true,                   how: '',
+    { id: 'standard', name: '標準',         logo: '🧭', svg: true, desc: 'いつものPon',                         need: () => true,                   how: '',
       sw: { head: '#fcfcfb', bg: '#f6f6f4', card: '#fcfcfb', accent: '#2a78d6', ink: '#0b0b0b' } },
     { id: 'pirate',   name: '海賊船',       logo: '🏴‍☠️', desc: '羊皮紙と木の甲板。暗い画面では船長室に', need: (u) => u.following,           how: 'フォローで解放',
       sw: { head: '#4a2f17', bg: '#efe2c4', card: '#f8efd9', accent: '#8e2a1c', ink: '#2b1d0e' } },
@@ -52,14 +62,15 @@
   ];
 
   /* ---------- 状態 ---------- */
-  const P = { perk: null, profile: { theme: 'standard', title: '', custom: '' }, quotedKeysFromBodies: [], u: null, loaded: false };
+  const P = { perk: null, profile: { theme: 'standard', title: '', custom: '', epithet: '' }, quotedKeysFromBodies: [], u: null, loaded: false };
 
   function unlocks(me) {
     const captain = !!(me && me.urlname === CAPTAIN);
+    const admiral = !!(me && ADMIRALS.includes(String(me.urlname || '').toLowerCase()));
     const perk = P.perk && me && P.perk.urlname === me.urlname ? P.perk : null;
     const quoted = new Set([...(perk ? perk.quotedKeys || [] : []), ...P.quotedKeysFromBodies || []]).size;
     const u = {
-      captain,
+      captain, admiral,
       following: captain || !!(perk && perk.following),
       total: perk ? perk.total || 0 : 0,
       liked: perk ? (perk.likedKeys || []).length : 0,
@@ -74,23 +85,41 @@
   /** 自由入力の称号：「海賊王」と作者の名前は名乗れない（本人を除く） */
   const BANNED = ['海賊王', '海賊の王', 'パイレーツキング', 'pirateking', 'kingofpirates', 'ジァン=サマー', 'ジャン=サマー', 'ジァンサマー', 'ジャンサマー', 'jeanjeanjean'];
   function normalize(s) { return String(s || '').normalize('NFKC').replace(/[\s・･.\-_ー〜~]/g, '').toLowerCase(); }
+  /** 名乗れない言葉（称号の自由入力と二つ名で共通） */
+  function reservedProblem(t, u) {
+    if (!(u && u.captain) && BANNED.some((b) => normalize(t).includes(normalize(b)))) return '「海賊王」と作者の名前は、ジァン=サマー本人だけが名乗れます。';
+    if (!(u && u.admiral) && normalize(t).includes(normalize('元帥'))) return '「元帥」「大元帥」は、noteの加藤貞顕さんと深津貴之さんだけが名乗れます。';
+    return '';
+  }
   function customProblem(text, u) {
     const t = String(text || '').trim();
     if (!t) return '';
     if ([...t].length > MAX_TITLE) return `${MAX_TITLE}文字までにしてください。`;
-    if (!u.captain && BANNED.some((b) => normalize(t).includes(normalize(b)))) return '「海賊王」と作者の名前は、ジァン=サマー本人だけが名乗れます。';
-    return '';
+    return reservedProblem(t, u);
   }
 
+  /** 二つ名：12文字まで・改行なし。「海賊王」と作者の名前は名乗れない（本人を除く） */
+  function epithetProblem(text, u) {
+    const t = String(text || '').trim();
+    if (!t) return '';
+    if ([...t].length > MAX_EPITHET) return `${MAX_EPITHET}文字までにしてください（今は${[...t].length}文字）。`;
+    if (/[\r\n\t]/.test(t)) return '改行は使えません。';
+    return reservedProblem(t, u);
+  }
+  /** いま表示する二つ名（問題があれば出さない） */
+  function currentEpithet(u) { const t = String(P.profile.epithet || '').trim(); return t && !epithetProblem(t, u) ? t : ''; }
+
   function availableTitles(u) {
-    if (!u.following) return [];
-    return [...GROUPS.flatMap((g) => g.titles), ...SPECIALS.filter((s) => s.need(u)).map((s) => s.title)];
+    const admiral = u.admiral ? ADMIRAL_TITLES : [];
+    if (!u.following) return [...admiral];
+    return [...admiral, ...GROUPS.flatMap((g) => g.titles), ...SPECIALS.filter((s) => s.need(u)).map((s) => s.title)];
   }
 
   /** いま表示する称号（使えなくなっていたら出さない） */
   function currentTitle(u) {
-    if (!u.following) return '';
+    if (!u.following && !u.admiral) return '';
     const pr = P.profile;
+    if (!u.following && pr.title === '__custom') return '';
     if (pr.title === '__custom') return customProblem(pr.custom, u) ? '' : String(pr.custom || '').trim();
     return availableTitles(u).includes(pr.title) ? pr.title : '';
   }
@@ -103,14 +132,14 @@
     const html = document.documentElement;
     if (t.id === 'standard') delete html.dataset.theme; else html.dataset.theme = t.id;
     const logo = document.querySelector('.top .logo');
-    if (logo) logo.textContent = t.logo;
+    if (logo) { if (t.svg) { if (!logo.querySelector('svg')) logo.innerHTML = LOGO_SVG; } else logo.textContent = t.logo; }
     try { localStorage.setItem('pon.theme', t.id); } catch (_) { /* 次回のちらつき防止用。なくても動く */ }
   }
 
   async function load() {
     const [perk, profile, bodies] = await Promise.all([NDB.kvGet('perk', null), NDB.kvGet('profile', null), NDB.getAll('bodies')]);
     P.perk = perk;
-    P.profile = { theme: 'standard', title: '', custom: '', ...(profile || {}) };
+    P.profile = { theme: 'standard', title: '', custom: '', epithet: '', ...(profile || {}) };
     P.quotedKeysFromBodies = bodies.filter((b) => b && b.html && QUOTE_RE.test(b.html)).map((b) => b.noteKey);
     P.loaded = true;
   }
@@ -122,7 +151,14 @@
   function renderHeader(u) {
     const who = $('#whoami');
     if (!who) return;
-    who.querySelectorAll('.title-chip').forEach((x) => x.remove());
+    who.querySelectorAll('.title-chip, .epithet').forEach((x) => x.remove());
+    const ep = currentEpithet(u);
+    if (ep && me()) {
+      const e = document.createElement('span');
+      e.className = 'epithet';
+      e.textContent = ep;
+      who.prepend(e);
+    }
     const t = currentTitle(u);
     if (t && me()) {
       const chip = document.createElement('span');
@@ -163,20 +199,32 @@
 
   function renderTitle(u) {
     const sel = $('#titleSel'), custom = $('#titleCustom'), msg = $('#titleMsg');
-    const locked = !u.following;
+    const locked = !u.following && !u.admiral;
     const specials = SPECIALS.filter((s) => s.need(u));
-    sel.innerHTML = '<option value="">（称号なし）</option>'
-      + (specials.length ? `<optgroup label="特別な称号">${specials.map((s) => `<option>${esc(s.title)}</option>`).join('')}</optgroup>` : '')
+    const admiral = u.admiral ? `<optgroup label="noteの元帥">${ADMIRAL_TITLES.map((t) => `<option>${esc(t)}</option>`).join('')}</optgroup>` : '';
+    sel.innerHTML = '<option value="">（称号なし）</option>' + admiral
+      + (!u.following ? '' : (specials.length ? `<optgroup label="特別な称号">${specials.map((s) => `<option>${esc(s.title)}</option>`).join('')}</optgroup>` : '')
       + GROUPS.map((g) => `<optgroup label="${esc(g.name)}">${g.titles.map((t) => `<option>${esc(t)}</option>`).join('')}</optgroup>`).join('')
-      + '<option value="__custom">自由に名乗る…</option>';
+      + '<option value="__custom">自由に名乗る…</option>');
     const pr = P.profile;
     sel.value = pr.title === '__custom' || availableTitles(u).includes(pr.title) ? pr.title : '';
     sel.disabled = locked;
     custom.hidden = sel.value !== '__custom';
     custom.value = pr.custom || '';
-    custom.disabled = locked;
+    custom.disabled = locked || !u.following;
     const problem = sel.value === '__custom' ? customProblem(custom.value, u) : '';
-    msg.textContent = locked ? '🔒 フォローすると選べます。' : problem;
+    msg.textContent = locked ? '🔒 フォローすると選べます。' : !u.following ? 'ほかの称号は、@jeanjeanjean をフォローすると選べます。' : problem;
+    msg.classList.toggle('bad', !!problem);
+  }
+
+  function renderEpithet(u) {
+    const inp = $('#epithetInput');
+    if (!inp) return;
+    if (document.activeElement !== inp) inp.value = P.profile.epithet || '';
+    $('#epithetIdeas').innerHTML = `<span class="meta">候補：</span>${EPITHET_IDEAS.map((w) => `<button type="button" class="btn small" data-epi="${esc(w)}">${esc(w)}</button>`).join('')}<button type="button" class="btn small" data-epi="">なし</button>`;
+    const problem = epithetProblem(inp.value, u);
+    const msg = $('#epithetMsg');
+    msg.textContent = problem || (inp.value.trim() ? `表示：${inp.value.trim()} ${me() ? me().nickname : ''}` : '');
     msg.classList.toggle('bad', !!problem);
   }
 
@@ -186,8 +234,9 @@
     const b = bountyOf();
     $('#wanted').innerHTML = `
       <div class="w-head">WANTED</div>
-      <div class="w-photo" aria-hidden="true">${esc(currentTheme(u).logo)}</div>
+      <div class="w-photo" aria-hidden="true">${currentTheme(u).svg ? LOGO_SVG.replace(/ponl/g, 'ponw') : esc(currentTheme(u).logo)}</div>
       <div class="w-title">${esc(t || '称号なし')}</div>
+      <div class="w-epithet">${esc(currentEpithet(u))}</div>
       <div class="w-name">${esc(m ? m.nickname : '名無しの船乗り')}</div>
       <div class="w-bounty"><span>懸賞金</span> ${b.toLocaleString('ja-JP')}</div>
       <div class="w-foot">Pirates of note</div>`;
@@ -219,7 +268,7 @@
         <span class="u-body"><b>${esc(s.title)}</b><span class="meta">${esc(s.how)}</span></span>
         <span class="u-prog">${u.captain ? '' : `${Math.min(a, b)} / ${b}`}<span class="u-bar"><span style="width:${pct}%"></span></span></span>
       </li>`;
-    }).join('') + (u.captain ? '' : `<li class="king"><span class="u-mark">👑</span><span class="u-body"><b>海賊王</b><span class="meta">この称号を名乗れるのは、ジァン=サマー（@jeanjeanjean）ただ一人。</span></span><span class="u-prog"></span></li>`);
+    }).join('') + `<li class="king"><span class="u-mark">⚓</span><span class="u-body"><b>元帥・大元帥</b><span class="meta">${u.admiral ? '名乗れます。上の「称号」から選んでください。' : 'この称号を名乗れるのは、noteの加藤貞顕さん（@sadaaki）と深津貴之さん（@fladdict）だけ。'}</span></span><span class="u-prog"></span></li>` + (u.captain ? '' : `<li class="king"><span class="u-mark">👑</span><span class="u-body"><b>海賊王</b><span class="meta">この称号を名乗れるのは、ジァン=サマー（@jeanjeanjean）ただ一人。</span></span><span class="u-prog"></span></li>`);
   }
 
   function render() {
@@ -231,6 +280,7 @@
     if (!$('#tab-crew')) return;
     renderStatus(u);
     renderTitle(u);
+    renderEpithet(u);
     renderWanted(u);
     renderThemes(u);
     renderUnlocks(u);
@@ -256,7 +306,15 @@
         renderHeader(u); renderWanted(u);
       }, 250);
     });
+    let te;
+    $('#epithetInput').addEventListener('input', (e) => {
+      P.profile.epithet = e.target.value;
+      clearTimeout(te);
+      te = setTimeout(async () => { await saveProfile(); const u = P.u; renderEpithet(u); renderHeader(u); renderWanted(u); }, 250);
+    });
     tab.addEventListener('click', async (e) => {
+      const ep = e.target.closest('[data-epi]');
+      if (ep) { P.profile.epithet = ep.dataset.epi; $('#epithetInput').value = ep.dataset.epi; await saveProfile(); render(); return; }
       const b = e.target.closest('[data-theme-pick]');
       if (b && !b.disabled) { P.profile.theme = b.dataset.themePick; await saveProfile(); render(); return; }
       const c = e.target.closest('[data-action="perk-check"]');
@@ -284,6 +342,6 @@
 
   async function init() { await load(); bind(); render(); }
 
-  window.PonPerks = { render, reload: async () => { await load(); render(); }, _test: { unlocks, customProblem, normalize, SPECIALS, THEMES } };
+  window.PonPerks = { render, reload: async () => { await load(); render(); }, _test: { unlocks, customProblem, epithetProblem, normalize, SPECIALS, THEMES, EPITHET_IDEAS } };
   init();
 })();

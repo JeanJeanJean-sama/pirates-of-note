@@ -1,8 +1,8 @@
 /* sw.js — オフラインでも開けるようにする（画面のファイルだけを保存。記録データは扱わない） */
-const CACHE = 'pon-web-0.5.2';
+const CACHE = 'pon-web-0.6.0';
 const FILES = ['./', 'index.html', 'install.html', 'privacy.html', 'manifest.webmanifest',
-  'app/env.js', 'app/db.js', 'app/store.js', 'app/web.js', 'app/dashboard.js', 'app/views.js', 'app/bodies.js', 'app/perks.js', 'app/theme-boot.js', 'app/webapp.js', 'app/dashboard.css',
-  'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
+  'app/env.js', 'app/db.js', 'app/store.js', 'app/web.js', 'app/dashboard.js', 'app/periods.js', 'app/views.js', 'app/cardtrend.js', 'app/share.js', 'app/search.js', 'app/calendar.js', 'app/missions.js', 'app/features.js', 'app/account.js', 'app/bodies.js', 'app/perks.js', 'app/theme-boot.js', 'app/webapp.js', 'app/dashboard.css',
+  'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-512-maskable.png', 'icons/apple-touch-icon.png', 'icons/pon-logo.svg'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
 // 通信できるときは最新を取得し、できないときは保存しておいたものを表示

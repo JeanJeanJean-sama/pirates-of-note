@@ -126,9 +126,28 @@
     const j = await getJson('/api/v2/current_user');
     const d = j && j.data;
     if (!d || !d.urlname) throw new Error('NOT_LOGGED_IN');
-    const me = { urlname: d.urlname, nickname: d.nickname || d.urlname, followerCount: d.follower_count ?? null };
-    await send('SAVE_ME', me);
-    return me;
+    return { urlname: d.urlname, nickname: d.nickname || d.urlname, followerCount: d.follower_count ?? null };
+  }
+
+  /* ---------- ログイン中のアカウント（v0.6.0 ⑫） ----------
+   * 記録の前に、ログイン中のアカウントが「記録するアカウント」と同じか確かめる。
+   * 通信を増やしすぎないよう、noteのログインの印（トークン）が前と同じで24時間以内なら、前に確かめた結果を使う。
+   * トークンそのものは覚えず、指紋（SHA-256）だけを拡張機能の中に覚える（どこにも送らない）。 */
+  const ACCOUNT_RECHECK_MS = 24 * 3600e3;
+  async function tokenPrint() {
+    const t = gqlToken() || '';
+    const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
+    return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  async function currentAccount(state) {
+    const tp = await tokenPrint();
+    const seen = state.accountSeen;
+    if (seen && seen.tp === tp && Date.now() - seen.at < ACCOUNT_RECHECK_MS) {
+      return { me: state.me && state.me.urlname === seen.urlname ? state.me : { urlname: seen.urlname, nickname: seen.nickname || seen.urlname }, fetched: false };
+    }
+    const me = await fetchMe();
+    await send('SET_KV', { key: 'accountSeen', value: { tp, urlname: me.urlname, nickname: me.nickname, at: Date.now() } });
+    return { me, fetched: true };
   }
 
   /* ---------- コメント ---------- */
@@ -393,9 +412,22 @@
       locked = true;
       if (state.forceRun) await send('SET_KV', { key: 'forceRun', value: false });
 
-      const needSnapshot = force || (s.autoCollect && (!state.latestSnapshot || state.latestSnapshot.date !== jstToday()));
-      let me = state.me;
-      if (!me || needSnapshot || Date.now() - (me.updatedAt || 0) > 24 * 3600e3) me = await fetchMe();
+      let needSnapshot = force || (s.autoCollect && (!state.latestSnapshot || state.latestSnapshot.date !== jstToday()));
+      // 記録するものが何もない設定なら、noteに何も問い合わせない
+      const anything = needSnapshot || s.autoCollect || s.checkComments || s.recordMyComments || s.saveBodies || (state.bodyQueue || []).length || s.perkCheck !== false || state.perkForce;
+      if (!anything) return;
+      // 記録の前のアカウント確認（OFFにはできない）。違えば何も記録しない
+      const cur = await currentAccount(state);
+      const chk = await send('ACCOUNT_CHECK', { me: cur.me });
+      if (!chk.ok) {
+        if (!chk.repeated) log('warn', `別のアカウント（@${cur.me.urlname}）でログイン中だったので記録しませんでした（記録するアカウントは @${chk.account && chk.account.urlname}）`);
+        return;
+      }
+      let me = cur.me;
+      // 記録するアカウントを変えたあとは、今日の記録が前のアカウントのものなので記録し直す
+      if (!needSnapshot && s.autoCollect && state.latestSnapshot && state.latestSnapshot.account && state.latestSnapshot.account !== String(me.urlname).toLowerCase()) needSnapshot = true;
+      if (!cur.fetched && (!state.me || state.me.urlname !== me.urlname || needSnapshot || Date.now() - (state.me.updatedAt || 0) > 24 * 3600e3)) me = await fetchMe();
+      if (cur.fetched || me !== state.me) await send('SAVE_ME', me);
 
       if (needSnapshot) {
         const snap = await collectSnapshot(me);
@@ -420,7 +452,7 @@
       const n = await saveBodies((await send('GET_STATE')).state, s);
       if (n) log('info', `記事の本文を ${n} 件保存しました`);
       if (s.recordMyComments || s.checkComments) await recordMyCommentsOnPage(me, fresh);
-      try { await checkPerk(me, s); } catch (e) { if (!String(e.message).includes('NOT_LOGGED_IN')) log('warn', `称号の確認に失敗: ${e.message}`); }
+      if (s.perkCheck !== false) try { await checkPerk(me, s); } catch (e) { if (!String(e.message).includes('NOT_LOGGED_IN')) log('warn', `称号の確認に失敗: ${e.message}`); }
     } catch (e) {
       if (String(e.message).includes('NOT_LOGGED_IN')) return;
       log('error', e.message);

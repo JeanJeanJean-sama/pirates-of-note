@@ -4,7 +4,7 @@
  * ============================================================ */
 'use strict';
 
-const B = { keys: new Set(), missing: new Set(), pollTimer: null };
+const B = { keys: new Set(), missing: new Set(), pollTimer: null, eye: new Map() };
 const CSV_CELL_LIMIT = 30000; // Excel の1セル上限（32,767文字）の手前
 
 /* ---------- HTML → テキスト（GAS版の記事一覧シートと同じ書式） ---------- */
@@ -82,6 +82,11 @@ async function loadBodies() {
   const all = await NDB.getAll('bodies');
   B.keys = new Set(all.filter((r) => !r.missing).map((r) => r.noteKey));
   B.missing = new Set(all.filter((r) => r.missing).map((r) => r.noteKey));
+  // 見出し画像のURL（v0.6.0 ④：画面に表示するだけ）。https のものだけ使う
+  const eye = new Map(all.filter((r) => !r.missing && /^https:\/\//.test(r.eyecatch || '')).map((r) => [r.noteKey, r.eyecatch]));
+  const changed = eye.size !== B.eye.size || [...eye].some(([k, v]) => B.eye.get(k) !== v);
+  B.eye = eye;
+  if (changed && window.PonViews) window.PonViews.refreshCards();
   return all.filter((r) => !r.missing);
 }
 
@@ -185,6 +190,11 @@ async function exportBodiesCsv(opts = {}) {
   const rows = (await loadBodies()).filter((r) => !keys || keys.has(r.noteKey));
   if (!rows.length) return alert('ダウンロードできる本文がありません。');
   rows.sort((a, b) => (a.publishedAt || '').localeCompare(b.publishedAt || '')); // 古い順（GAS版と同じ並び）
+  const label = opts && opts.label ? `-${opts.label}` : '';
+  download(`pon-bodies${label}-${jstDate()}.csv`, bodiesCsvText(rows), 'text/csv');
+}
+/** 本文の記録（古い順に並べたもの）→ CSV の文字 */
+function bodiesCsvText(rows) {
   const prepared = rows.map((r) => {
     const text = bodyToText(r.html);
     const parts = [];
@@ -197,8 +207,7 @@ async function exportBodiesCsv(opts = {}) {
     r.url, r.title, parts[0], jst(r.publishedAt), text.length, (r.hashtags || []).map((t) => `#${t}`).join(' '), priceLabel(r), jst(r.fetchedAt), r.noteKey,
     ...Array.from({ length: extra }, (_, i) => parts[i + 1] || ''),
   ]);
-  const label = opts && opts.label ? `-${opts.label}` : '';
-  download(`pon-bodies${label}-${jstDate()}.csv`, toCsv([head, ...body]), 'text/csv');
+  return toCsv([head, ...body]);
 }
 
 /* ---------- Markdown ZIP（無圧縮 ZIP を自前で作成。外部ライブラリなし） ---------- */
@@ -235,6 +244,21 @@ function makeZip(files) {
   return new Blob([...chunks, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
 }
 
+const mdFront = (r) => ['---', `title: ${JSON.stringify(String(r.title ?? ''))}`, `url: ${JSON.stringify(String(r.url ?? ''))}`, `published: ${JSON.stringify(jst(r.publishedAt))}`,
+  `hashtags: [${(r.hashtags || []).map((t) => JSON.stringify(String(t))).join(', ')}]`, `price: ${JSON.stringify(priceLabel(r))}`, `fetched: ${JSON.stringify(jst(r.fetchedAt))}`, '---', ''].join('\n');
+const mdOf = (r) => `${mdFront(r)}# ${r.title}\n\n${bodyToMarkdown(r.html)}\n`;
+/** ファイル名に使えない文字を除く */
+const safeName = (s) => String(s).replace(/[\\/:*?"<>|\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+function uniqueNames(rows, ext) {
+  const used = new Set();
+  return rows.map((r) => {
+    let name = `${jst(r.publishedAt).slice(0, 10) || 'unknown'}_${safeName(r.title) || r.noteKey}.${ext}`;
+    if (used.has(name)) name = name.replace(new RegExp(`\\.${ext}$`), `_${r.noteKey}.${ext}`);
+    used.add(name);
+    return name;
+  });
+}
+
 async function exportBodiesMarkdown() {
   const rows = await loadBodies();
   if (!rows.length) return alert('ダウンロードできる本文がありません。');
@@ -251,6 +275,114 @@ async function exportBodiesMarkdown() {
   });
   downloadBlob(`pon-bodies-${jstDate()}.zip`, makeZip(files));
 }
+
+/* ---------- 記事を選んでダウンロード（v0.6.0 ⑥） ----------
+ * 選び方：すべて・今月・先月・投稿日の範囲・記事ごとにチェック
+ * 出し方：1つのファイルにまとめる（標準）／記事ごとのファイルをZIPにまとめる（無圧縮・自前）
+ * 本文を記録していない記事は「未記録」と表示して選べない（0.6.0 ではここから取りに行かない）
+ */
+const SEL = { picked: new Set(), preset: null, q: '', from: '', to: '' };
+const exportConf = () => ({ format: 'csv', pack: 'one', preset: 'all', ...((S.settings && S.settings.bodyExport) || {}) });
+const jstMonth = (offset = 0) => { const d = new Date(Date.now() + 9 * 3600e3); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + offset); return d.toISOString().slice(0, 7); };
+const pubDay = (iso) => jst(iso).slice(0, 10);
+
+/** 選べる記事の一覧（最後の記録の記事＋本文だけ記録してある記事） */
+async function exportCandidates() {
+  const recs = await loadBodies();
+  const byKey = new Map(recs.map((r) => [r.noteKey, r]));
+  const cur = latest();
+  const list = (cur ? cur.items : []).filter((i) => i.key).map((i) => ({ key: i.key, title: i.title, publishedAt: i.publishedAt, rec: byKey.get(i.key) || null }));
+  const seen = new Set(list.map((x) => x.key));
+  for (const r of recs) if (!seen.has(r.noteKey)) list.push({ key: r.noteKey, title: r.title, publishedAt: r.publishedAt, rec: r });
+  list.sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
+  return list;
+}
+function presetMatch(x, preset) {
+  const d = pubDay(x.publishedAt);
+  if (preset === 'all') return true;
+  if (preset === 'this') return d.slice(0, 7) === jstMonth(0);
+  if (preset === 'last') return d.slice(0, 7) === jstMonth(-1);
+  if (preset === 'range') return !!d && (!SEL.from || d >= SEL.from) && (!SEL.to || d <= SEL.to);
+  return false;
+}
+
+async function renderExport() {
+  const box = $('#bodyExport');
+  if (!box) return;
+  const c = exportConf();
+  const list = await exportCandidates();
+  const preset = SEL.preset || c.preset;
+  if (preset !== 'pick') { SEL.picked = new Set(list.filter((x) => x.rec && presetMatch(x, preset)).map((x) => x.key)); }
+  const inScope = preset === 'pick' ? list : list.filter((x) => presetMatch(x, preset));
+  const noBody = inScope.filter((x) => !x.rec).length;
+  const q = SEL.q.trim().toLowerCase();
+  const shown = list.filter((x) => !q || (x.title || '').toLowerCase().includes(q));
+  const n = SEL.picked.size;
+  const PRE = [['all', 'すべて'], ['this', `今月（${+jstMonth(0).slice(5)}月）`], ['last', `先月（${+jstMonth(-1).slice(5)}月）`], ['range', '投稿日の範囲'], ['pick', '記事ごとに選ぶ']];
+  box.innerHTML = `<div class="controls wrap">
+      <span class="seg" role="group" aria-label="記事の選び方">${PRE.map(([k, l]) => `<button type="button" data-xpre="${k}" aria-pressed="${preset === k}">${l}</button>`).join('')}</span>
+      <span class="custom-range" ${preset === 'range' ? '' : 'hidden'}><input type="date" id="xFrom" aria-label="投稿日の範囲の最初の日" value="${esc(SEL.from)}">〜<input type="date" id="xTo" aria-label="投稿日の範囲の最後の日" value="${esc(SEL.to)}"></span>
+    </div>
+    <div class="x-list-head"><input type="search" id="xSearch" placeholder="タイトルで絞り込み" value="${esc(SEL.q)}" aria-label="タイトルで絞り込み">
+      <span class="meta">チェックを付け外しすると「記事ごとに選ぶ」になります</span></div>
+    <ul class="x-list" id="xList">${shown.map((x) => `<li class="${x.rec ? '' : 'norec'}"><label class="check">
+        <input type="checkbox" data-xkey="${esc(x.key)}" ${x.rec ? '' : 'disabled'} ${SEL.picked.has(x.key) ? 'checked' : ''}>
+        <span class="x-date">${esc(pubDay(x.publishedAt) || '–')}</span><span class="x-title">${esc(x.title || x.key)}</span>${x.rec ? '' : '<span class="tag">未記録</span>'}</label></li>`).join('') || '<li class="meta">記事がありません。</li>'}</ul>
+    <div class="controls wrap x-out">
+      <label>形式 <select id="xFormat"><option value="csv" ${c.format === 'csv' ? 'selected' : ''}>CSV（Excelなどで開く）</option><option value="md" ${c.format === 'md' ? 'selected' : ''}>Markdown（文字のファイル）</option></select></label>
+      <span class="seg" role="group" aria-label="出し方"><button type="button" data-xpack="one" aria-pressed="${c.pack === 'one'}">1つのファイルにまとめる</button><button type="button" data-xpack="zip" aria-pressed="${c.pack === 'zip'}">記事ごとのファイルをZIPにまとめる</button></span>
+    </div>
+    <p class="btn-row"><button class="btn primary dl" data-action="bodies-selected" ${n ? '' : 'disabled'}>⬇ 選んだ${fmt(n)}本の本文をダウンロード</button></p>
+    <p class="meta" id="xMeta">選んでいる記事：${fmt(n)}本${noBody ? `　／　この選び方で本文を記録していない記事：${fmt(noBody)}本（「未記録」は選べません${self.PON_ENV === 'web' ? '' : '。上の「⬇ 全記事の本文をダウンロード」で取り込めます'}）` : ''}</p>`;
+}
+
+async function exportSelected() {
+  const c = exportConf();
+  const rows = (await loadBodies()).filter((r) => SEL.picked.has(r.noteKey)).sort((a, b) => (a.publishedAt || '').localeCompare(b.publishedAt || ''));
+  if (!rows.length) return alert('ダウンロードできる本文がありません。');
+  const preset = SEL.preset || c.preset;
+  const label = preset === 'all' ? 'all' : preset === 'this' ? jstMonth(0) : preset === 'last' ? jstMonth(-1)
+    : preset === 'range' ? `${(SEL.from || 'start').replace(/-/g, '')}-${(SEL.to || 'end').replace(/-/g, '')}` : `${rows.length}articles`;
+  const base = `pon-bodies-${label}-${jstDate()}`;
+  if (c.pack === 'zip') {
+    const names = uniqueNames(rows, c.format === 'md' ? 'md' : 'csv');
+    const files = rows.map((r, i) => ({ name: `${base}/${names[i]}`, content: c.format === 'md' ? mdOf(r) : bodiesCsvText([r]) }));
+    downloadBlob(`${base}.zip`, makeZip(files));
+  } else if (c.format === 'md') {
+    const text = rows.map(mdOf).join('\n\n');
+    download(`${base}.md`, text, 'text/markdown');
+  } else {
+    download(`${base}.csv`, bodiesCsvText(rows), 'text/csv');
+  }
+}
+async function setExport(patch) { S.settings.bodyExport = { ...exportConf(), ...patch }; await NDB.kvSet('settings', S.settings); renderExport(); }
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('[data-xpre],[data-xpack]');
+  if (!b) return;
+  if (b.dataset.xpre) { SEL.preset = b.dataset.xpre; if (b.dataset.xpre !== 'pick') setExport({ preset: b.dataset.xpre }); else renderExport(); }
+  else setExport({ pack: b.dataset.xpack });
+});
+document.addEventListener('change', (e) => {
+  const t = e.target;
+  if (!t) return;
+  if (t.dataset && t.dataset.xkey) {
+    // 今の選び方の結果から「記事ごとに選ぶ」に切り替えて、1本ずつ付け外しする
+    SEL.preset = 'pick';
+    if (t.checked) SEL.picked.add(t.dataset.xkey); else SEL.picked.delete(t.dataset.xkey);
+    const q = $('#xSearch') ? $('#xSearch').value : '';
+    renderExport().then(() => { const s = $('#xSearch'); if (s) s.value = q; });
+  } else if (t.id === 'xFrom' || t.id === 'xTo') { SEL.from = $('#xFrom').value; SEL.to = $('#xTo').value; SEL.preset = 'range'; renderExport(); }
+  else if (t.id === 'xFormat') setExport({ format: t.value });
+});
+document.addEventListener('input', (e) => {
+  if (e.target && e.target.id === 'xSearch') {
+    SEL.q = e.target.value;
+    const q = SEL.q.trim().toLowerCase();
+    $$('#xList li').forEach((li) => { const t = (li.querySelector('.x-title') || {}).textContent || ''; li.hidden = !!q && !t.toLowerCase().includes(q); });
+  }
+});
+ACTIONS['bodies-selected'] = () => exportSelected();
 
 /* ---------- イベント ---------- */
 /** 全記事の本文をダウンロード：Ponに足りない分をnoteから取り込んでから書き出す */
@@ -293,6 +425,6 @@ document.addEventListener('click', async (e) => {
   btn.disabled = false; btn.textContent = '⬇ 本文をダウンロード（CSV）';
 });
 
-window.PonBodies = { has: (k) => B.keys.has(k), render: renderBodies, bodyToText, bodyToMarkdown, makeZip };
-$$('.tabs button').forEach((b) => b.addEventListener('click', () => { if (b.dataset.tab === 'data') renderBodies(); }));
+window.PonBodies = { has: (k) => B.keys.has(k), eyecatch: (k) => B.eye.get(k) || '', render: renderBodies, bodyToText, bodyToMarkdown, makeZip, renderExport };
+$$('.tabs button').forEach((b) => b.addEventListener('click', () => { if (b.dataset.tab === 'data') { renderBodies(); renderExport(); } }));
 renderBodies();

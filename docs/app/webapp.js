@@ -41,15 +41,20 @@ async function importFromHash() {
   }
   if (!data || data.app !== 'pon-web' || !data.me || !data.snapshot) { toast('Ponのデータではありませんでした。', true); return; }
 
-  // 別のアカウントのデータが混ざらないよう確認
-  const cur = await NDB.kvGet('me', null);
-  if (cur && cur.urlname && cur.urlname !== data.me.urlname) {
-    if (!confirm(`この画面には @${cur.urlname} のデータが保存されています。\n@${data.me.urlname} のデータを取り込むと混ざってしまいます。取り込みますか？`)) return;
+  // 記録するアカウントの確認（v0.6.0 ⑫）：違うアカウントのデータは何も取り込まない
+  const chk = await PonStore.checkAccount(data.me);
+  if (!chk.ok) {
+    await PonStore.appendLog('warn', `別のアカウント（@${data.me.urlname}）でログイン中だったので記録しませんでした（記録するアカウントは @${chk.account.urlname}）`);
+    await load();
+    toast(`別のアカウント（@${data.me.urlname}）でログイン中だったので記録しませんでした。記録するのは @${chk.account.urlname} です。`, true);
+    return;
   }
+  const acc = chk.account.urlname;
+  const st = (r) => PonStore.stamp(r, acc);
   await PonStore.saveMe(data.me);
-  await PonStore.saveSnapshot(data.snapshot);
-  if (data.unreplied && data.unreplied.length) await PonStore.saveUnreplied(data.unreplied);
-  if (data.myComments && data.myComments.length) await PonStore.saveMyComments(data.myComments);
+  await PonStore.saveSnapshot(st(data.snapshot));
+  if (data.unreplied && data.unreplied.length) await PonStore.saveUnreplied(data.unreplied.map(st));
+  if (data.myComments && data.myComments.length) await PonStore.saveMyComments(data.myComments.map(st));
   if (data.threadReplies && data.threadReplies.length) await PonStore.saveThreadReplies(data.threadReplies);
   if (data.perk) await NDB.kvSet('perk', data.perk);
   for (const l of data.logs || []) await PonStore.appendLog(l.level, l.message);
@@ -73,7 +78,7 @@ async function requestPersist() {
 async function buildDump() {
   const dump = { app: BACKUP_APP, version: 1, appVersion: ponVersion(), source: 'pon-web', exportedAt: new Date().toISOString(), stores: {} };
   for (const st of ['snapshots', 'unreplied', 'myComments', 'bodies']) dump.stores[st] = await NDB.getAll(st);
-  dump.kv = { me: await NDB.kvGet('me', null), settings: await NDB.kvGet('settings', {}), dismissed: await NDB.kvGet('dismissed', {}), threadReplies: await NDB.kvGet('threadReplies', {}), profile: await NDB.kvGet('profile', null), perk: await NDB.kvGet('perk', null) };
+  dump.kv = { me: await NDB.kvGet('me', null), settings: await NDB.kvGet('settings', {}), dismissed: await NDB.kvGet('dismissed', {}), threadReplies: await NDB.kvGet('threadReplies', {}), profile: await NDB.kvGet('profile', null), perk: await NDB.kvGet('perk', null), plans: await NDB.kvGet('plans', []), missions: await NDB.kvGet('missions', []), recordAccount: await PonStore.recordAccount() };
   return dump;
 }
 

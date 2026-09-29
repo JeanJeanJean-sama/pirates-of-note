@@ -22,9 +22,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
+/** 保存の前の最後の見張り：直近の確認が「記録するアカウント」と違えば保存しない（v0.6.0 ⑫） */
+const GUARDED = new Set(['SAVE_ME', 'SAVE_SNAPSHOT', 'SAVE_UNREPLIED', 'SAVE_MY_COMMENTS', 'SAVE_THREAD_REPLIES', 'SAVE_BODY']);
+const GUARDED_KV = new Set(['perk']);
+async function accountName() { const a = await NDB.kvGet('recordAccount', null); return a ? a.urlname : ''; }
+
 async function handle(msg, sender) {
   const p = msg.payload || {};
+  if ((GUARDED.has(msg.type) || (msg.type === 'SET_KV' && GUARDED_KV.has(p.key))) && !(await PonStore.gateOk())) {
+    throw new Error('ACCOUNT_MISMATCH: 記録するアカウントと違うため保存しませんでした');
+  }
   switch (msg.type) {
+    case 'ACCOUNT_CHECK': { const r = await PonStore.checkAccount(p.me); await refreshBadge(); return r; }
+
     case 'GET_STATE': return { state: await PonStore.getState() };
 
     case 'ACQUIRE_LOCK': {
@@ -39,11 +49,11 @@ async function handle(msg, sender) {
 
     case 'SAVE_ME': await PonStore.saveMe(p); return {};
 
-    case 'SAVE_SNAPSHOT': await PonStore.saveSnapshot(p.snapshot); return {};
+    case 'SAVE_SNAPSHOT': await PonStore.saveSnapshot(PonStore.stamp(p.snapshot, await accountName())); return {};
 
-    case 'SAVE_UNREPLIED': await PonStore.saveUnreplied(p.records); await refreshBadge(); return {};
+    case 'SAVE_UNREPLIED': { const a = await accountName(); await PonStore.saveUnreplied(p.records.map((r) => PonStore.stamp(r, a))); await refreshBadge(); return {}; }
 
-    case 'SAVE_MY_COMMENTS': await PonStore.saveMyComments(p.records); return {};
+    case 'SAVE_MY_COMMENTS': { const a = await accountName(); await PonStore.saveMyComments(p.records.map((r) => PonStore.stamp(r, a))); return {}; }
 
     case 'SET_KV': await NDB.kvSet(p.key, p.value); return {};
 
@@ -53,7 +63,7 @@ async function handle(msg, sender) {
 
     case 'RUN_NOW': return runNow(true);
 
-    case 'SAVE_BODY': await PonStore.saveBody(p.record); return {};
+    case 'SAVE_BODY': await PonStore.saveBody(PonStore.stamp(p.record, await accountName())); return {};
 
     case 'RUN_BODIES': {
       // p.keys: 保存したい記事キーの配列（ダッシュボードで「保存」を押したもの）
@@ -100,6 +110,15 @@ async function runNow(forceAll) {
 
 async function refreshBadge() {
   try {
+    // 別のアカウントでログイン中だったので記録しなかったとき：「!」で気づけるようにする（v0.6.0 ⑫）
+    const mm = await NDB.kvGet('accountMismatch', null);
+    if (mm) {
+      await chrome.action.setBadgeText({ text: '!' });
+      await chrome.action.setBadgeBackgroundColor({ color: '#b35c00' });
+      await chrome.action.setTitle({ title: `Pirates of note：別のアカウント（@${mm.urlname}）でログイン中だったので記録しませんでした。記録するのは @${mm.expected} です。` });
+      return;
+    }
+    await chrome.action.setTitle({ title: 'Pirates of note を開く' });
     const n = await PonStore.unrepliedCount();
     await chrome.action.setBadgeText({ text: n > 0 ? String(n > 99 ? '99+' : n) : '' });
     await chrome.action.setBadgeBackgroundColor({ color: '#e34948' });
