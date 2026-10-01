@@ -55,7 +55,28 @@ async function importFromHash() {
   await PonStore.saveSnapshot(st(data.snapshot));
   if (data.unreplied && data.unreplied.length) await PonStore.saveUnreplied(data.unreplied.map(st));
   if (data.myComments && data.myComments.length) await PonStore.saveMyComments(data.myComments.map(st));
-  if (data.threadReplies && data.threadReplies.length) await PonStore.saveThreadReplies(data.threadReplies);
+  // v0.6.2 M：前の日の記録の確定（Web版に記録がある日だけ。記録のない日は作らない）
+  if (data.finals && data.finals.length) {
+    const meta = new Map([...(data.snapshot.items || []).map((i) => [i.key, i]), ...data.finals.flatMap((f) => (f.arts || []).map((a) => [a.key, a]))]);
+    let fin = 0;
+    for (const f of data.finals) {
+      const ci = Object.fromEntries((f.cols || []).map((c, i) => [c, i]));
+      const items = (f.rows || []).map((r) => { const k = r[ci.key], m = meta.get(k) || {}; return { key: k, title: m.title || '', url: m.url || '', status: m.status || '', publishedAt: m.publishedAt || '', imp: r[ci.imp] || 0, pv: r[ci.pv] || 0, like: r[ci.like] || 0, comment: r[ci.comment] || 0, sales: r[ci.sales] || 0 }; });
+      const cur = await NDB.get('snapshots', f.date);
+      if (!cur || cur.final) continue;
+      const why = PonStore.finalBlock(cur, acc, new Map((await NDB.getAll('articles')).map((a) => [a.key, a])));
+      if (why) { await PonStore.appendLog('warn', `${f.date} の記録は確定しませんでした（${why}）`); continue; }
+      const r = await PonStore.finalizeSnapshot(f.date, items, { statUpdatedAt: f.statUpdatedAt });
+      if (!r.done) continue;
+      fin++;
+      if (r.missing.length) await PonStore.appendLog('warn', `${f.date} の確定：noteの答えに無い記事が ${r.missing.length}件あったので、Ponの数字を残しました`);
+      if (r.smaller.length) await PonStore.appendLog('warn', `${f.date} の確定：noteの数字がPonの記録より小さい記事が ${r.smaller.length}件ありました。noteの数字を使いました`);
+    }
+    if (fin) await PonStore.appendLog('info', `前の日の記録を確定しました（${fin}日分）`);
+  }
+  if (data.lookAt) await NDB.kvSet('lastCommentLookAt', data.lookAt); // v0.6.2 K：最後にコメントを確かめた時刻
+  if (data.threadReplies && data.threadReplies.length) await PonStore.saveThreadReplies(data.threadReplies); // 0.6.1 までのブックマークレット
+  for (const t of data.threads || []) await PonStore.saveThreads(t.noteKey, t.items); // v0.6.2 J：やり取りの判定の結果
   if (data.perk) await NDB.kvSet('perk', data.perk);
   for (const l of data.logs || []) await PonStore.appendLog(l.level, l.message);
   await PonStore.appendLog('info', `記録を取り込みました（${data.snapshot.items.length}記事）`);
@@ -75,13 +96,6 @@ async function requestPersist() {
 }
 
 /* ---------- バックアップ ---------- */
-async function buildDump() {
-  const dump = { app: BACKUP_APP, version: 1, appVersion: ponVersion(), source: 'pon-web', exportedAt: new Date().toISOString(), stores: {} };
-  for (const st of ['snapshots', 'unreplied', 'myComments', 'bodies']) dump.stores[st] = await NDB.getAll(st);
-  dump.kv = { me: await NDB.kvGet('me', null), settings: await NDB.kvGet('settings', {}), dismissed: await NDB.kvGet('dismissed', {}), threadReplies: await NDB.kvGet('threadReplies', {}), profile: await NDB.kvGet('profile', null), perk: await NDB.kvGet('perk', null), plans: await NDB.kvGet('plans', []), missions: await NDB.kvGet('missions', []), recordAccount: await PonStore.recordAccount() };
-  return dump;
-}
-
 async function markBackedUp() {
   await NDB.kvSet('lastBackupAt', Date.now());
   renderBackupBanner();
@@ -89,7 +103,8 @@ async function markBackedUp() {
 
 async function shareBackup() {
   const name = `pon-backup-${jstDate()}.json`;
-  const file = new File([JSON.stringify(await buildDump())], name, { type: 'application/json' });
+  const { blob } = await PonBackup.blob({ appVersion: ponVersion(), source: 'pon-web' });
+  const file = new File([blob], name, { type: 'application/json' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: 'Ponのバックアップ' });
@@ -99,7 +114,7 @@ async function shareBackup() {
       if (e && e.name === 'AbortError') return; // 共有をキャンセル
     }
   }
-  download(name, await file.text(), 'application/json');
+  downloadBlob(name, blob);
   await markBackedUp();
 }
 
@@ -111,7 +126,7 @@ async function renderBackupBanner() {
   if (!snaps.length || (days != null && days < BACKUP_REMIND_DAYS)) { el.hidden = true; return; }
   el.innerHTML = `<p><b>バックアップをおすすめします</b>　${days == null ? 'まだバックアップしていません。' : `最後のバックアップから${days}日たちました。`}</p>
     <p class="hint">スマホのデータは、ブラウザの「Cookieとサイトデータ」の削除や機種変更で消えてしまいます。</p>
-    <p><button class="btn primary" data-action="share-backup">バックアップを共有（ドライブ等に保存）</button></p>`;
+    <p><button class="btn primary" data-action="share-backup">バックアップを共有（ドライブなどに置く）</button></p>`;
   el.hidden = false;
 }
 

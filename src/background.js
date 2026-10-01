@@ -6,7 +6,7 @@
  *  ・未返信コメント数をアイコンのバッジに表示
  * note への通信はすべて content.js（note.com のページ内）で行い、ここでは行わない。
  * ============================================================ */
-importScripts('db.js', 'store.js'); // 保存処理は store.js（Webアプリ版と共通）
+importScripts('db.js', 'data.js', 'store.js', 'threads.js'); // 保存処理は store.js（Webアプリ版と共通）
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('src/dashboard.html') });
@@ -23,14 +23,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 /** 保存の前の最後の見張り：直近の確認が「記録するアカウント」と違えば保存しない（v0.6.0 ⑫） */
-const GUARDED = new Set(['SAVE_ME', 'SAVE_SNAPSHOT', 'SAVE_UNREPLIED', 'SAVE_MY_COMMENTS', 'SAVE_THREAD_REPLIES', 'SAVE_BODY']);
+const GUARDED = new Set(['SAVE_FINAL', 'FINAL_CANDIDATES', 'SAVE_ME', 'SAVE_SNAPSHOT', 'SAVE_UNREPLIED', 'SAVE_MY_COMMENTS', 'SAVE_THREAD_REPLIES', 'SAVE_THREADS', 'SAVE_BODY']);
 const GUARDED_KV = new Set(['perk']);
+let claimChain = Promise.resolve();
 async function accountName() { const a = await NDB.kvGet('recordAccount', null); return a ? a.urlname : ''; }
 
 async function handle(msg, sender) {
   const p = msg.payload || {};
   if ((GUARDED.has(msg.type) || (msg.type === 'SET_KV' && GUARDED_KV.has(p.key))) && !(await PonStore.gateOk())) {
-    throw new Error('ACCOUNT_MISMATCH: 記録するアカウントと違うため保存しませんでした');
+    throw new Error('ACCOUNT_MISMATCH: 記録するアカウントと違うため記録しませんでした');
   }
   switch (msg.type) {
     case 'ACCOUNT_CHECK': { const r = await PonStore.checkAccount(p.me); await refreshBadge(); return r; }
@@ -59,7 +60,31 @@ async function handle(msg, sender) {
 
     case 'SAVE_THREAD_REPLIES': await PonStore.saveThreadReplies(p.items); await refreshBadge(); return {};
 
+    case 'SAVE_THREADS': await PonStore.saveThreads(p.noteKey, p.items); await refreshBadge(); return {};
+
     case 'LOG': await PonStore.appendLog(p.level, p.message); return {};
+
+    // v0.6.2 M：前の日の記録の確定
+    case 'FINAL_CANDIDATES': {
+      const r = await PonStore.finalCandidates(p.today, p.max || 30, p.minDate || '');
+      if (r.tooOld) await PonStore.appendLog('info', `1か月より前の記録 ${r.tooOld}日分は確定しませんでした（noteは古い日の「その日の終わり」の数字を返さないため。今の数字のままです）`);
+      for (const x of r.skipped) await PonStore.appendLog('warn', `${x.date} の記録は確定しませんでした（${x.reason}）`);
+      return { dates: r.dates };
+    }
+    case 'SAVE_FINAL': {
+      const r = await PonStore.finalizeSnapshot(p.date, p.items, { statUpdatedAt: p.statUpdatedAt });
+      if (r.done && r.missing.length) await PonStore.appendLog('warn', `${p.date} の確定：noteの答えに無い記事が ${r.missing.length}件あったので、Ponの数字を残しました（${r.missing.slice(0, 3).join('、')}${r.missing.length > 3 ? ' など' : ''}）`);
+      if (r.done && r.smaller.length) await PonStore.appendLog('warn', `${p.date} の確定：noteの数字がPonの記録より小さい記事が ${r.smaller.length}件ありました。noteの数字を使いました（${r.smaller.slice(0, 3).join('、')}${r.smaller.length > 3 ? ' など' : ''}）`);
+      return r;
+    }
+    case 'FINAL_FAIL': {
+      const giveUp = await PonStore.finalFailed(p.date);
+      if (giveUp) await PonStore.appendLog('warn', `${p.date} の記録は、3回続けて確定できなかったので、今の数字のままにしました（${p.reason || ''}）`);
+      return { giveUp };
+    }
+
+    // v0.6.2 K：通知の1ページ目を読む番か（タブが複数あっても順番に聞くので、1回だけ true になる）
+    case 'CLAIM_QUICK_NOTICE': { const r = claimChain.then(() => PonStore.claimQuickNotice(p.everyMs)); claimChain = r.catch(() => {}); return r; }
 
     case 'RUN_NOW': return runNow(true);
 

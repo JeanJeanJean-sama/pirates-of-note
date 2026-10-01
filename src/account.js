@@ -42,7 +42,8 @@ const PonAccount = (() => {
     const out = { snapshots: [], unreplied: [], bodies: [], myComments: [] };
     if (!a) return out;
     for (const s of data.snapshots || []) {
-      const c = countByAccount(s.items, a);
+      // v0.6.2：記事のURLだけ要るので、items を組み立てずに記事の情報から読む（data.urlOf があれば）
+      const c = countByAccount(data.urlOf && s.keys ? s.keys().map((k) => ({ url: data.urlOf(k) })) : s.items, a);
       const otherN = Object.values(c.others).reduce((x, y) => x + y, 0);
       const marked = s.account && norm(s.account) !== a;
       if (marked || otherN > c.own) {
@@ -71,7 +72,14 @@ const PonAccount = (() => {
     if (mark) return { urlname: norm(mark), how: 'mark' };
     const snaps = ((dump && dump.stores && dump.stores.snapshots) || []).slice().sort((x, y) => String(x.date).localeCompare(String(y.date)));
     const last = snaps[snaps.length - 1];
-    const guess = last ? majority(last.items) : '';
+    // v0.6.2 の形（数字だけ）なら、記事のURLはバックアップの articles から
+    let items = last && last.items;
+    if (last && !items && Array.isArray(last.rows)) {
+      const url = new Map(((dump.stores && dump.stores.articles) || []).map((a) => [a.key, a.url]));
+      const ki = (last.cols || ['key']).indexOf('key');
+      items = last.rows.map((r) => ({ url: url.get(r[ki]) || '' }));
+    }
+    const guess = last ? majority(items) : '';
     return guess ? { urlname: guess, how: 'guess' } : { urlname: '', how: 'none' };
   }
 
@@ -87,7 +95,7 @@ const PonAccount = (() => {
     const cur = await PonStore.recordAccount();
     const b = accountOfDump(dump);
     if (!cur || !b.urlname || b.urlname === cur.urlname) return true;
-    return confirm(`別のアカウント（@${b.urlname}）のバックアップです${b.how === 'guess' ? '（中の記事のURLから判断しました）' : ''}。\n今の「記録するアカウント」は @${cur.urlname} です。読み込むと、2つのアカウントの記録が混ざります。\n読み込みますか？`);
+    return ponAsk({ title: '別のアカウントのバックアップです', text: `別のアカウント（@${b.urlname}）のバックアップです${b.how === 'guess' ? '（中の記事のURLから判断しました）' : ''}。\n今の「記録するアカウント」は @${cur.urlname} です。読み込むと、2つのアカウントの記録が混ざります。`, buttons: [{ label: 'やめる', value: false, kind: 'primary' }, { label: '読み込む', value: true, kind: 'danger' }] });
   }
   /** 復元のあと：まだ「記録するアカウント」が無ければ、バックアップのアカウントにする */
   async function afterRestore(dump) {
@@ -128,8 +136,12 @@ const PonAccount = (() => {
     if (!el) return;
     const a = await PonStore.recordAccount();
     if (!a) { el.innerHTML = '<p class="meta">記録するアカウントが決まると確かめられます。</p>'; return; }
-    const [snapshots, unreplied, bodies, myComments] = await Promise.all(['snapshots', 'unreplied', 'bodies', 'myComments'].map((s) => NDB.getAll(s)));
-    const f = findMixed({ snapshots, unreplied, bodies, myComments }, a.urlname);
+    const [unreplied, bodies, myComments] = await Promise.all(['unreplied', 'bodies', 'myComments'].map((s) => NDB.getAll(s)));
+    // 毎日の記録は小分けに読んで確かめる（v0.6.2 A：全部を一度に読まない）
+    el.innerHTML = '<p class="meta loading" role="status">記録を確かめています…</p>';
+    const urlOf = (k) => { const x = PonData.article(k); return x ? x.url : ''; };
+    const f = findMixed({ snapshots: [], unreplied, bodies, myComments }, a.urlname);
+    await PonData.scanAll((views) => { f.snapshots.push(...findMixed({ snapshots: views, urlOf }, a.urlname).snapshots); });
     const n = f.snapshots.length + f.unreplied.length + f.bodies.length + f.myComments.length;
     const row = (kind, x, label) => `<li><label class="check"><input type="checkbox" data-mix="${kind}|${esc(x.key)}" ${X.picked.has(`${kind}|${x.key}`) ? 'checked' : ''}> ${label}</label></li>`;
     el.innerHTML = `<p class="hint">記事のURL（note.com/ID/n/…）のIDを見て、@${esc(a.urlname)} ではないアカウントの記録らしいものを並べます。独自ドメインなどでURLからIDが分からない記事は「判定できない」として、疑いには数えません。同じ日に両方のアカウントで記録した日は、後から記録した方で上書きされているため、消えた方は戻せません。外した日は「記録のない日」として計算されます。</p>
@@ -145,7 +157,9 @@ const PonAccount = (() => {
 
   async function removePicked() {
     if (!X.picked.size) return;
-    if (!confirm(`選んだ${X.picked.size}件の記録を、Ponから外します。元に戻せません。\n先に ⬇ バックアップをダウンロードしましたか？`)) return;
+    const ok = await ponAsk({ title: '記録を外す', text: `選んだ${X.picked.size}件の記録を、Ponから外します。元に戻せません。\n先に ⬇ バックアップをダウンロードしておくと安心です。`, buttons: [{ label: '⬇ バックアップしてから外す', value: 'backup', kind: 'primary' }, { label: '外す', value: 'go', kind: 'danger' }, { label: 'やめる', value: null }], cancel: null });
+    if (!ok) return;
+    if (ok === 'backup') await ACTIONS['json-backup']();
     for (const k of X.picked) { const i = k.indexOf('|'); await NDB.del(k.slice(0, i), k.slice(i + 1)); }
     const n = X.picked.size;
     X.picked.clear();
@@ -166,7 +180,7 @@ const PonAccount = (() => {
       const v = ($('#accNew').value || '').replace(/^@/, '').trim();
       const cur = await PonStore.recordAccount();
       if (cur && v.toLowerCase() === cur.urlname) { $('#accMsg').textContent = `すでに @${cur.urlname} です。`; return; }
-      if (!confirm(`記録するアカウントを ${cur ? `@${cur.urlname} から ` : ''}@${v} に変えます。\n今までの記録は残りますが、新しいアカウントの記録と同じ場所に入ります。\nよろしいですか？`)) return;
+      if (!(await ponAsk({ title: '記録するアカウントを変える', text: `記録するアカウントを ${cur ? `@${cur.urlname} から ` : ''}@${v} に変えます。\n今までの記録は残りますが、新しいアカウントの記録と同じ場所に入ります。`, buttons: [{ label: '変える', value: true, kind: 'danger' }, { label: 'やめる', value: false }] }))) return;
       try {
         const mm = await NDB.kvGet('accountMismatch', null);
         await PonStore.changeAccount(v, mm && mm.urlname === v.toLowerCase() ? mm.nickname : '');
@@ -185,7 +199,7 @@ const PonAccount = (() => {
     if (btn) { btn.disabled = !X.picked.size; btn.textContent = `選んだ${fmt(X.picked.size)}件の記録を外す`; }
   });
 
-  $$('.tabs button').forEach((b) => b.addEventListener('click', () => { if (b.dataset.tab === 'data' || b.dataset.tab === 'overview') render(); }));
-  return { calc, render, confirmBackupAccount, afterRestore };
+  // v0.6.2 B：描くのは dashboard.js の drawTab（データ・設定のタブ）と renderAll（概要の上の知らせ）
+  return { calc, render, renderBanner, confirmBackupAccount, afterRestore };
 })();
 if (typeof module !== 'undefined') module.exports = PonAccount;

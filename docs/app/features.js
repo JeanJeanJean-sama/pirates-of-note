@@ -26,10 +26,10 @@ const PonFeatures = (() => {
     { group: '記事', key: 'search', label: '記事を探す', sel: ['#searchCard'] },
     { group: '記事', key: 'eyecatch', label: '見出し画像', own: true },
     { group: '記事', key: 'cardTrend', label: '記事カードの推移のグラフ', own: true },
-    { group: 'タブ', key: 'map', label: 'マップ', tab: 'map' },
+    { group: 'タブ', key: 'map', label: 'マップ（記事のタブの中）', sel: ['.subtabs'], sub: 'map' },
     { group: 'タブ', key: 'comments', label: 'コメント', tab: 'comments' },
-    { group: 'タブ', key: 'calendar', label: 'カレンダー（近い締切の表示も）', tab: 'calendar', sel: ['#soonBanner'] },
-    { group: 'タブ', key: 'missions', label: 'セルフミッション（カレンダーのタブの中）', sel: ['#missionCard'] },
+    { group: 'タブ', key: 'calendar', label: 'カレンダー（予定のタブの中。近い締切の表示も）', sel: ['#soonBanner', '#calSoon', '#calCard'] },
+    { group: 'タブ', key: 'missions', label: 'セルフミッション（予定のタブの中）', sel: ['#missionCard'] },
     { group: 'タブ', key: 'crew', label: '称号・着せ替え（名前の前の称号・二つ名は残ります）', tab: 'crew' },
   ];
   const isOn = (f) => (f.own ? own[f.key].get() : get(f.key, true));
@@ -46,6 +46,17 @@ const PonFeatures = (() => {
         if (!on && b && b.getAttribute('aria-selected') === 'true') { const o = document.querySelector('.tabs button[data-tab="overview"]'); if (o) o.click(); }
       }
     }
+    // v0.6.2 D：マップを隠したら記事の中の「一覧／マップ」の切り替えも隠す（開いていたら一覧へ）
+    const mapOn = isOn(LIST.find((f) => f.key === 'map'));
+    const secMap = document.getElementById('tab-map');
+    if (secMap) secMap.classList.toggle('feature-off', !mapOn);
+    if (!mapOn && secMap && !secMap.hidden && typeof openTab === 'function') openTab('articles');
+    // 予定のタブは、カレンダーとセルフミッションの両方を隠したときだけ隠す
+    const planOn = isOn(LIST.find((f) => f.key === 'calendar')) || isOn(LIST.find((f) => f.key === 'missions'));
+    const pb = document.querySelector('.tabs button[data-tab="calendar"]'), ps = document.getElementById('tab-calendar');
+    if (pb) pb.classList.toggle('feature-off', !planOn);
+    if (ps) ps.classList.toggle('feature-off', !planOn);
+    if (!planOn && pb && pb.getAttribute('aria-selected') === 'true') { const o = document.querySelector('.tabs button[data-tab="overview"]'); if (o) o.click(); }
     renderList();
   }
 
@@ -63,7 +74,7 @@ const PonFeatures = (() => {
     if (!f) return;
     if (f.own) own[f.key].set(t.checked);
     else S.settings.features = { ...(S.settings.features || {}), [f.key]: t.checked };
-    await NDB.kvSet('settings', S.settings);
+    await saveSettings(...(f.own ? { rates: ['rates'], eyecatch: ['showEyecatch'], cardTrend: ['cardTrend'] }[f.key] : ['features']));
     // 自分の切り替えを持つ機能は、その画面を描き直す
     if (f.key === 'rates' && typeof PonPeriods !== 'undefined') PonPeriods.render();
     if ((f.key === 'eyecatch' || f.key === 'cardTrend') && window.PonViews) window.PonViews.refreshCards();

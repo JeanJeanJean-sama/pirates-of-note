@@ -12,7 +12,7 @@
 
 const PonShare = (() => {
   const conf = () => ({ period: true, top: true, n: 5, metric: 'pv', graph: true, mark: true, tab: 'text', ...((S.settings && S.settings.share) || {}) });
-  async function setConf(patch) { S.settings.share = { ...conf(), ...patch }; await NDB.kvSet('settings', S.settings); render(); }
+  async function setConf(patch) { S.settings.share = { ...conf(), ...patch }; await saveSettings('share'); render(); }
   const X = { canvas: null };
 
   const sgn = (n) => (n == null ? '－' : n > 0 ? `+${fmt(n)}` : n < 0 ? `−${fmt(-n)}` : '±0');
@@ -109,7 +109,7 @@ const PonShare = (() => {
       ctx.fillStyle = COL.muted; ctx.font = `20px ${FONT}`; ctx.fillText(`${D.metricLabel}の増えた数`, P + hw + 16, y + 28);
       y += 56;
       const maxInc = Math.max(1, ...D.articles.map((a) => a.inc));
-      const color = COL[D.metric] || COL.pv;
+      const color = (typeof PonColors !== 'undefined' && PonColors.colorOf(D.metric, true)) || COL[D.metric] || COL.pv;
       if (!D.articles.length) { ctx.fillStyle = COL.sub; ctx.font = `22px ${FONT}`; ctx.fillText(`この期間に${D.metricLabel}が増えた記事はありません`, P, y + 30); y += rowH; }
       // 右端の数字の幅はすべての行で同じにする（棒の右端をそろえるため）
       const rightW = Math.max(0, ...D.articles.map((a) => { ctx.font = `700 26px ${FONT}`; const vw = ctx.measureText(sgn(a.inc)).width; ctx.font = `20px ${FONT}`; return Math.max(vw, ctx.measureText(`累計 ${fmt(a.total)}`).width); })) + 8;

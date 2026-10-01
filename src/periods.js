@@ -77,9 +77,11 @@ const PonPeriods = (() => {
    * 終了日は「最後の記録の日」まで（それより先は記録がないため）
    * 戻り値 null = その期間は無い（記録を始める前）
    */
+  /** いちばん古い記録の日（画面では、読み込んでいない古い記録も含めた本当の最初の日） */
+  const firstOf = (snaps) => (typeof PonData !== 'undefined' && PonData.snaps === snaps && PonData.firstDate()) || snaps[0].date;
   function resolve(snaps, sel, back = 0) {
     if (!snaps.length) return null;
-    const first = snaps[0].date, lastDate = snaps[snaps.length - 1].date;
+    const first = firstOf(snaps), lastDate = snaps[snaps.length - 1].date;
     const kind = (sel && sel.kind) || 'prev';
     if (kind === 'prev') {
       const i = snaps.length - 1 - back;
@@ -220,9 +222,11 @@ const PonPeriods = (() => {
     const r = resolve(S.snapshots, v) || {};
     const min = S.snapshots[0] ? S.snapshots[0].date : '', max = latest() ? latest().date : '';
     el.classList.add('period-picker');
-    el.innerHTML = `<div class="seg" role="group" aria-label="期間">
-        ${[['7', '7日'], ['28', '28日'], ['month', '月ごと'], ['custom', 'カスタム'], ['prev', '前回の記録から']].map(([k, l]) => `<button type="button" data-pk="${k}" aria-pressed="${v.kind === k}">${l}</button>`).join('')}
+    const KINDS = [['7', '7日'], ['28', '28日'], ['month', '月ごと'], ['custom', 'カスタム'], ['prev', '前回の記録から']];
+    el.innerHTML = `<div class="seg pk-seg" role="group" aria-label="期間">
+        ${KINDS.map(([k, l]) => `<button type="button" data-pk="${k}" aria-pressed="${v.kind === k}">${l}</button>`).join('')}
       </div>
+      <select class="pk-select" aria-label="期間">${KINDS.map(([k, l]) => `<option value="${k}" ${v.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <span class="custom-range" ${v.kind === 'custom' ? '' : 'hidden'}>
         <input type="date" id="${idp}Start" aria-label="開始日" value="${esc(r.start || '')}" min="${esc(min)}" max="${esc(max)}">〜
         <input type="date" id="${idp}End" aria-label="終了日" value="${esc(r.end || '')}" min="${esc(min)}" max="${esc(max)}">
@@ -231,6 +235,8 @@ const PonPeriods = (() => {
       const k = b.dataset.pk;
       onChange(k === 'custom' ? { kind: 'custom', start: r.start, end: r.end } : { kind: k });
     }));
+    const psel = el.querySelector('.pk-select');
+    if (psel) psel.addEventListener('change', () => { const k = psel.value; onChange(k === 'custom' ? { kind: 'custom', start: r.start, end: r.end } : { kind: k }); });
     el.querySelectorAll('input[type=date]').forEach((inp) => inp.addEventListener('change', () => {
       const s = el.querySelector(`#${idp}Start`).value, e = el.querySelector(`#${idp}End`).value;
       if (isDay(s) && isDay(e)) onChange({ kind: 'custom', start: s, end: e });
@@ -240,7 +246,7 @@ const PonPeriods = (() => {
   async function setSel(v) {
     S.settings.growthPeriod = v;
     P.artShown = 20; P.back = 0;
-    await NDB.kvSet('settings', S.settings);
+    await saveSettings('growthPeriod');
     render();
   }
   function go(back) { P.back = back; P.artShown = 20; render(); }
@@ -267,9 +273,9 @@ const PonPeriods = (() => {
     const canFwd = !!resolve(snaps, sv, P.back - 1);
     const isLatest = r.end === snaps[snaps.length - 1].date;
     const unit = r.kind === 'prev' ? '記録' : r.kind === 'month' ? '月' : `${r.len}日`;
-    nav.innerHTML = `<button class="btn small" data-pnav="back" ${pr ? '' : 'disabled'}>← 前の${unit}</button>
-      <span class="pnav-range"><b>${esc(rangeText(r))}</b>${r.kind !== 'month' && r.len > 1 ? `（${r.len}日）` : ''}${isLatest ? ' <span class="tag">最新</span>' : ''}</span>
-      <button class="btn small" data-pnav="fwd" ${canFwd ? '' : 'disabled'}>次の${unit} →</button>
+    nav.innerHTML = `<button class="btn small" data-pnav="back" ${pr ? '' : 'disabled'} aria-label="前の${unit}">←<span class="wide"> 前の${unit}</span></button>
+      <span class="pnav-range"><b>${esc(rangeText(r)).replace(/^(\d{4}\/)/, '<span class="wide">$1</span>')}</b>${r.kind !== 'month' && r.len > 1 ? `<span class="wide">（${r.len}日）</span>` : ''}${isLatest ? ' <span class="tag">最新</span>' : ''}</span>
+      <button class="btn small" data-pnav="fwd" ${canFwd ? '' : 'disabled'} aria-label="次の${unit}"><span class="wide">次の${unit} </span>→</button>
       <button class="btn small" data-pnav="latest" ${P.back !== 0 ? '' : 'disabled'}>${r.kind === 'custom' ? '選んだ期間に戻る' : '最新'}</button>`;
 
     const g = growth(snaps, r.start, r.end, { fallbackFirst: true });
@@ -316,7 +322,7 @@ const PonPeriods = (() => {
           <div class="seg" role="group" aria-label="グラフの形">
             <button type="button" data-ctype="line" aria-pressed="${ct === 'line'}">線</button>
             <button type="button" data-ctype="bar" aria-pressed="${ct === 'bar'}">棒</button>
-          </div>
+          </div>${typeof PonSettings !== 'undefined' ? PonSettings.link('periodChart') : ''}
         </div>
       </div>
       <div id="flowChart" class="flow-chart"></div>
@@ -332,15 +338,63 @@ const PonPeriods = (() => {
     return daily(S.snapshots, x.start, end).map((d) => ({ ...d, future: d.date > lastRec() }));
   }
   const RATE = { ctr: ['pv', 'imp'], likeRate: ['like', 'pv'], commentRate: ['comment', 'pv'] };
+  const RATE_NAME = { ctr: '開封率', likeRate: 'スキ率', commentRate: 'コメント率' };
   const valOf = (d, k) => { if (!d || !d.v) return null; if (RATE[k]) { const [a, b] = RATE[k]; return d.v[b] > 0 && d.v[a] != null ? d.v[a] / d.v[b] : null; } return d.v[k]; };
-  const tipLines = (d) => (d.v
-    ? `<div>インプレッション ${signed(d.v.imp)}　PV ${signed(d.v.pv)}</div><div>スキ ${signed(d.v.like)}　コメント ${signed(d.v.comment)}　フォロワー ${signed(d.v.follower)}</div><div>開封率 ${rateTxt(d.v.pv, d.v.imp)}　スキ率 ${rateTxt(d.v.like, d.v.pv)}　コメント率 ${rateTxt(d.v.comment, d.v.pv)}</div>`
-    : `<div>${d.future ? 'まだ来ていない日' : '記録なし'}</div>`);
+  /** 今日（記録の途中の日）か。日付は日本時間 */
+  const todayJst = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+  const isPartial = (d) => !!(d && d.v && d.date === todayJst());
+  /** カーソルを合わせたときの中身：その指標の数字だけ（v0.6.1 (4)） */
+  const dayHead = (d) => `<b>${md(d.date)}（${wd(d.date)}）</b>${isPartial(d) ? '・今日（途中）' : ''}${d.v && d.span > 1 ? `・${d.span}日分` : ''}`;
+  const numTxt = (v) => (v == null ? '－' : v < 0 ? `−${fmt(-v)}` : fmt(v));
+  const valLine = (d, k) => {
+    if (!d || !d.v) return `${d && d.future ? 'まだ来ていない日' : '記録なし'}`;
+    if (RATE[k]) {
+      const [a, b] = RATE[k];
+      return `${RATE_NAME[k]} ${rateTxt(d.v[a], d.v[b])}（${SHORT[a]} ${numTxt(d.v[a])} ÷ ${SHORT[b]} ${numTxt(d.v[b])}）`;
+    }
+    return `${SHORT[k]} ${numTxt(d.v[k])}`;
+  };
+  const tipOne = (d, k, q) => `<div>${dayHead(d)}</div><div>${valLine(d, k)}</div>`
+    + (q ? `<div class="t-prev">前の期間 ${md(q.date)}（${wd(q.date)}）：${valLine(q, k)}</div>` : '');
   function placeTip(ev) {
     const tip = $('#tooltip');
     tip.hidden = false;
     const cx = ev.clientX || 0, cy = ev.clientY || 0;
     tip.style.left = `${Math.max(8, Math.min(cx + 14, innerWidth - tip.offsetWidth - 8))}px`; tip.style.top = `${Math.max(8, cy - tip.offsetHeight - 10)}px`;
+  }
+  const hideTip = () => { const t = $('#tooltip'); if (t) t.hidden = true; };
+  const CLS = { imp: 'c-imp', pv: 'c-pv', like: 'c-like', comment: 'c-comment', ctr: 'c-rate', likeRate: 'c-rate', commentRate: 'c-rate' };
+  /** 日付の段（記録のない日は「記録なし」、今日は「途中」） */
+  function dateRow(days, xc, y, n, every, kind, wide) {
+    let svg = '';
+    days.forEach((d, i) => {
+      const show = i % every === 0 || (i === n - 1 && i % every >= every / 2);
+      if (show) {
+        svg += kind === 'month' ? `<text class="tick" x="${xc(i)}" y="${y}" text-anchor="middle">${i + 1}日</text>`
+          : `<text class="tick" x="${xc(i)}" y="${y}" text-anchor="middle">${md(d.date)}</text>`;
+        if (n <= 14) svg += `<text class="tick" x="${xc(i)}" y="${y + 14}" text-anchor="middle">${wd(d.date)}</text>`;
+      }
+      const noteY = y + (n <= 14 ? 28 : 14);
+      if (!d.v && !d.future) svg += `<text class="daynote none" x="${xc(i)}" y="${noteY}" text-anchor="middle">${wide ? '記録なし' : '－'}</text>`;
+      else if (isPartial(d)) svg += `<text class="daynote part" x="${xc(i)}" y="${noteY}" text-anchor="middle">途中</text>`;
+    });
+    return svg;
+  }
+  function bindHits(el, fn) {
+    el.querySelectorAll('.hit').forEach((h) => {
+      const on = (ev) => { fn(h); placeTip(ev); };
+      h.addEventListener('mousemove', on);
+      h.addEventListener('click', (ev) => { ev.stopPropagation(); on(ev); });
+      h.addEventListener('mouseleave', () => { hideTip(); fn(null); });
+    });
+    el.addEventListener('click', () => { hideTip(); fn(null); });
+  }
+
+  /** v0.6.2 G：「記録なし」が並ぶ理由（記録を始める前の日があるとき）を1行で */
+  function beforeFirst(rows) {
+    const first = typeof PonData !== 'undefined' ? PonData.firstDate() : (S.snapshots[0] || {}).date;
+    const n = rows.filter((d) => !d.v && !d.future && first && d.date <= first).length;
+    return n ? `記録を始めた日（${fmtDate(first)}）までの${n}日は、前の日の記録がないので「記録なし」です（記録を始める前の期間です）。` : '';
   }
 
   /* 線グラフ（標準）：指標ごとに小さなグラフを縦に並べ、前の期間を点線で重ねる */
@@ -349,22 +403,24 @@ const PonPeriods = (() => {
     const cur = dayRows(r), prev = dayRows(pr);
     const entry = P.flow === 'entry';
     const panels = entry
-      ? [{ k: 'imp', t: 'インプレッション', c: 'c-imp' }, { k: 'pv', t: 'PV', c: 'c-pv' }, { k: 'ctr', t: '開封率（PV÷インプレッション）', c: 'c-rate' }]
-      : [{ k: 'pv', t: 'PV', c: 'c-pv' }, { k: 'like', t: 'スキ', c: 'c-like' }, { k: 'comment', t: 'コメント', c: 'c-comment' }];
+      ? [{ k: 'imp', t: 'インプレッション' }, { k: 'pv', t: 'PV' }, { k: 'ctr', t: '開封率（PV÷インプレッション）' }]
+      : [{ k: 'pv', t: 'PV' }, { k: 'like', t: 'スキ' }, { k: 'comment', t: 'コメント' }];
     const n = Math.max(cur.length, r.kind === 'prev' ? 0 : prev.length, 1);
     const W = Math.max(el.clientWidth || 600, 300), L = 52, R = 12, PH = 96, HEAD = 22, GAP = 14;
     const twoRow = W < 600, top0 = twoRow ? 44 : 26;
     const iw = W - L - R;
-    const H = top0 + panels.length * (HEAD + PH + GAP) + 34;
+    const H = top0 + panels.length * (HEAD + PH + GAP) + 50;
     const x = (i) => L + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
     const every = Math.ceil(n / Math.max(2, Math.floor(iw / 48)));
     const usePrev = pr && r.kind !== 'prev';
-    const fmtV = (k, v) => (v == null ? '－' : RATE[k] ? `${(v * 100).toFixed(2)}%` : signed(v));
     let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="日ごとの動き（線グラフ）">
       <g class="legend"><line class="cur-line" x1="${L}" x2="${L + 22}" y1="10" y2="10"/><text class="lbl" x="${L + 28}" y="14">今の期間 ${esc(rangeText(r))}</text>
       ${usePrev ? (() => { const lx = twoRow ? L : L + 260, ly = twoRow ? 28 : 10; return `<line class="prev-line" x1="${lx}" x2="${lx + 22}" y1="${ly}" y2="${ly}"/><text class="lbl" x="${lx + 28}" y="${ly + 4}">前の期間 ${esc(rangeText(pr))}</text>`; })() : ''}</g>`;
+    const pys = [];
     panels.forEach((p, pi) => {
       const y0 = top0 + pi * (HEAD + PH + GAP) + HEAD;
+      pys.push(y0);
+      const c = CLS[p.k];
       const cv = cur.map((d) => valOf(d, p.k)), pv = usePrev ? prev.map((d) => valOf(d, p.k)) : [];
       const all = [...cv, ...pv].filter((v) => v != null);
       const maxV = Math.max(RATE[p.k] ? 0.0001 : 1, ...all);
@@ -372,89 +428,102 @@ const PonPeriods = (() => {
       const yMax = ticks[ticks.length - 1] || 1;
       const y = (v) => y0 + PH - (Math.max(0, v) / yMax) * PH;
       const path = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (v == null) { pen = false; return; } d += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`; pen = true; }); return d; };
+      // 記録のない日をはさむところは点線でつなぐ
+      const gaps = (vals) => { let d = '', last = -1; vals.forEach((v, i) => { if (v == null) return; if (last >= 0 && i - last > 1) d += `M${x(last).toFixed(1)},${y(vals[last]).toFixed(1)}L${x(i).toFixed(1)},${y(v).toFixed(1)}`; last = i; }); return d; };
       svg += `<text class="ptitle" x="${L}" y="${y0 - 8}">${esc(p.t)}</text>`;
       svg += ticks.map((t) => `<line class="gridline" x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}"/><text class="tick" x="${L - 6}" y="${y(t) + 4}" text-anchor="end">${esc(RATE[p.k] ? `${+(t * 100).toFixed(2)}%` : fmt(t))}</text>`).join('');
-      if (usePrev) svg += `<path class="prev-line" d="${path(pv)}"/>`;
-      svg += `<path class="cur-line ${p.c}" d="${path(cv)}"/>`;
-      if (n <= 62) svg += cv.map((v, i) => (v == null ? '' : `<circle class="pt ${p.c}${cur[i].span > 1 ? ' multi' : ''}" cx="${x(i)}" cy="${y(v)}" r="${cur[i].span > 1 ? 3.5 : 2.5}"/>`)).join('');
-      // 記録のない日（まだ来ていない日は除く）を薄く塗る
-      cur.forEach((d, i) => { if (!d.v && !d.future) { const w = n === 1 ? 20 : iw / (n - 1); svg += `<rect class="nobar" x="${x(i) - w / 2}" y="${y0}" width="${w}" height="${PH}"/>`; } });
+      if (usePrev) svg += `<path class="prev-line" d="${path(pv)}"/><path class="prev-line gap" d="${gaps(pv)}"/>`;
+      svg += `<path class="cur-line ${c}" d="${path(cv)}"/><path class="gap-line ${c}" d="${gaps(cv)}"/>`;
+      if (n <= 62) svg += cv.map((v, i) => (v == null ? '' : `<circle class="pt ${c}${cur[i].span > 1 ? ' multi' : ''}${isPartial(cur[i]) ? ' part' : ''}" cx="${x(i)}" cy="${y(v)}" r="${cur[i].span > 1 || isPartial(cur[i]) ? 3.5 : 2.5}"/>`)).join('');
+      svg += `<circle class="hover-pt ${c}" id="flowPt${pi}" r="4.5" visibility="hidden"/>`;
+      p.y = y; p.cv = cv; p.pv = pv;
     });
     const yAxis = top0 + panels.length * (HEAD + PH + GAP);
-    for (let i = 0; i < n; i++) {
-      const d = cur[i] ? cur[i].date : '';
-      if (!(i % every === 0 || (i === n - 1 && i % every >= every / 2))) continue;
-      if (r.kind === 'month') svg += `<text class="tick" x="${x(i)}" y="${yAxis + 4}" text-anchor="middle">${i + 1}日</text>`;
-      else if (d) svg += `<text class="tick" x="${x(i)}" y="${yAxis + 4}" text-anchor="middle">${md(d)}</text>${n <= 14 ? `<text class="tick" x="${x(i)}" y="${yAxis + 18}" text-anchor="middle">${wd(d)}</text>` : ''}`;
-    }
+    svg += dateRow(cur, x, yAxis + 4, n, every, r.kind, n <= 14 && iw / n > 44);
     svg += `<line class="cross" id="flowCross" y1="${top0}" y2="${yAxis - GAP}" visibility="hidden"/>`;
-    for (let i = 0; i < n; i++) { const w = n === 1 ? iw : iw / (n - 1); svg += `<rect class="hit" data-i="${i}" x="${x(i) - w / 2}" y="${top0}" width="${w}" height="${yAxis - top0}"/>`; }
+    const w = n === 1 ? iw : iw / (n - 1);
+    panels.forEach((p, pi) => { for (let i = 0; i < n; i++) svg += `<rect class="hit" data-p="${pi}" data-i="${i}" x="${x(i) - w / 2}" y="${pys[pi] - HEAD}" width="${w}" height="${PH + HEAD + GAP}"/>`; });
     el.innerHTML = svg + '</svg>';
 
     const multi = cur.filter((d) => d.span > 1).length, none = cur.filter((d) => !d.v && !d.future).length;
-    $('#flowHint').textContent = `実線が今の期間、点線が前の期間です（1日目どうし、2日目どうしを重ねています）。${none ? `薄い灰色は記録のない日（${none}日）です。` : ''}${multi ? `大きめの点は、前の記録が2日以上前なので数日分がまとまっています（${multi}日）。` : ''}カーソルを合わせる（スマホはタップ）と数字が出ます。`;
+    const why = beforeFirst(cur);
+    $('#flowHint').textContent = `${why}実線が今の期間、点線が前の期間です（1日目どうし、2日目どうしを重ねています）。${none ? `記録のない日（${none}日）は、前後の点を細い点線でつないでいます。` : ''}${multi ? `白抜きの大きめの点は、前の記録が2日以上前なので数日分がまとまっています（${multi}日）。` : ''}${cur.some(isPartial) ? '今日の点は記録の途中の数字です。' : ''}点にカーソルを合わせる（スマホはタップ）と、その指標の数字が出ます。`;
 
     const cross = $('#flowCross');
-    const show = (ev, i) => {
+    bindHits(el, (h) => {
+      panels.forEach((_, pi) => { const pt = $(`#flowPt${pi}`); if (pt) pt.setAttribute('visibility', 'hidden'); });
+      if (!h) { cross.setAttribute('visibility', 'hidden'); return; }
+      const i = +h.dataset.i, p = panels[+h.dataset.p];
       cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.setAttribute('visibility', 'visible');
       const d = cur[i], q = usePrev ? prev[i] : null;
-      $('#tooltip').innerHTML = (d ? `<div><b>${fmtDate(d.date)}（${wd(d.date)}）</b>${d.span > 1 ? `・${d.span}日分` : ''}</div>${tipLines(d)}` : '')
-        + (q ? `<div class="t-prev">前の期間 ${fmtDate(q.date)}：${q.v ? panels.map((p) => `${p.t.replace(/（.*）/, '')} ${fmtV(p.k, valOf(q, p.k))}`).join('　') : '記録なし'}</div>` : '');
-      placeTip(ev);
-    };
-    el.querySelectorAll('.hit').forEach((h) => {
-      h.addEventListener('mousemove', (ev) => show(ev, +h.dataset.i));
-      h.addEventListener('click', (ev) => show(ev, +h.dataset.i));
-      h.addEventListener('mouseleave', () => { $('#tooltip').hidden = true; cross.setAttribute('visibility', 'hidden'); });
+      const pt = $(`#flowPt${h.dataset.p}`);
+      if (pt && p.cv[i] != null) { pt.setAttribute('cx', x(i)); pt.setAttribute('cy', p.y(p.cv[i])); pt.setAttribute('visibility', 'visible'); }
+      $('#tooltip').innerHTML = d ? tipOne(d, p.k, q) : (q ? `<div class="t-prev">前の期間 ${md(q.date)}（${wd(q.date)}）：${valLine(q, p.k)}</div>` : '');
     });
   }
 
-  /* 棒グラフ（選んだとき）：上が入口の数、下がその先の数。棒はそれぞれの最大値に合わせた長さ＋下の段に率 */
+  /* 棒グラフ（v0.6.1 (3)）：指標ごとに段を分け、各段はその段の最大値を基準にする。下に率の数字の段 */
   function renderFlowBars(r) {
     const el = $('#flowChart');
     const days = dayRows(r);
     const entry = P.flow === 'entry';
-    const top = entry ? 'imp' : 'pv', bots = entry ? ['pv'] : ['like', 'comment'];
-    const cls = { imp: 'c-imp', pv: 'c-pv', like: 'c-like', comment: 'c-comment' };
-    const maxOf = (k) => Math.max(1, ...days.map((d) => (d.v && d.v[k] > 0 ? d.v[k] : 0)));
-    const mTop = maxOf(top), mBot = Object.fromEntries(bots.map((k) => [k, maxOf(k)]));
-    const n = days.length;
-    const W = Math.max(el.clientWidth || 600, 300), H = 250, L = 8, R = 8;
-    const iw = W - L - R, bw = iw / n, gap = Math.min(6, bw * 0.25);
-    const upH = 90, dnH = 90, mid = 22 + upH;
-    const showRate = n <= 14 && bw >= 30;
+    const rows = entry ? ['imp', 'pv'] : ['pv', 'like', 'comment'];
+    const rates = entry ? ['ctr'] : ['likeRate', 'commentRate'];
+    const maxOf = (k) => Math.max(0, ...days.map((d) => (d.v && d.v[k] > 0 ? d.v[k] : 0)));
+    const n = Math.max(days.length, 1);
+    const W = Math.max(el.clientWidth || 600, 300), L = 6, R = 6;
+    const iw = W - L - R, bw = iw / n;
+    const barW = Math.max(2, Math.min(bw * 0.62, 56));
+    const PH = entry ? 84 : 70, HEAD = 18, GAP = 8;
+    const wideNum = bw >= 38;          // 率を数字で並べられる幅か
+    const RH = wideNum ? 32 : 40;      // 率の段の高さ
+    const xc = (i) => L + i * bw + bw / 2;
     const every = Math.ceil(n / Math.max(2, Math.floor(iw / 44)));
-    let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="日ごとの動き（棒グラフ）">
-      <text class="lbl" x="${L}" y="12">${esc(SHORT[top])}</text><text class="lbl" x="${W - R}" y="12" text-anchor="end">最大 ${fmt(mTop)}</text>
-      <text class="lbl" x="${L}" y="${mid + dnH + 14}">${esc(bots.map((k) => SHORT[k]).join('・'))}</text>
-      <text class="lbl" x="${W - R}" y="${mid + dnH + 14}" text-anchor="end">最大 ${esc(bots.map((k) => fmt(mBot[k])).join('・'))}</text>
-      <line class="baseline" x1="${L}" x2="${W - R}" y1="${mid}" y2="${mid}"/>`;
-    days.forEach((d, i) => {
-      const bx = L + i * bw + gap / 2, w = bw - gap;
-      if (!d.v) {
-        if (!d.future) svg += `<rect class="nobar" x="${bx}" y="${mid - upH}" width="${w}" height="${upH + dnH}"/>`;
-      } else {
-        const hT = (Math.max(0, d.v[top] || 0) / mTop) * upH;
-        svg += `<rect class="${cls[top]}${d.span > 1 ? ' multi' : ''}" x="${bx}" y="${mid - hT}" width="${w}" height="${hT}"/>`;
-        const sw = w / bots.length;
-        bots.forEach((k, j) => { const h = (Math.max(0, d.v[k] || 0) / mBot[k]) * dnH; svg += `<rect class="${cls[k]}${d.span > 1 ? ' multi' : ''}" x="${bx + j * sw}" y="${mid}" width="${sw}" height="${h}"/>`; });
-      }
-      if (i % every === 0 || (i === n - 1 && i % every >= every / 2)) svg += `<text class="tick" x="${bx + w / 2}" y="${mid + dnH + 34}" text-anchor="middle">${md(d.date)}</text>${n <= 14 ? `<text class="tick" x="${bx + w / 2}" y="${mid + dnH + 48}" text-anchor="middle">${wd(d.date)}</text>` : ''}`;
-      svg += `<rect class="hit" data-i="${i}" x="${L + i * bw}" y="0" width="${bw}" height="${H}"/>`;
+    let y = 4, svg = '';
+    const hits = [];
+    const panelTop = y;
+    rows.forEach((k) => {
+      const m = maxOf(k);
+      svg += `<text class="ptitle ${CLS[k]}-t" x="${L}" y="${y + 12}">${esc(SHORT[k])}</text><text class="lbl" x="${W - R}" y="${y + 12}" text-anchor="end">最大 ${fmt(m)}</text>`;
+      const top = y + HEAD, base = top + PH;
+      svg += `<line class="baseline" x1="${L}" x2="${W - R}" y1="${base}" y2="${base}"/>`;
+      days.forEach((d, i) => {
+        if (d.v) {
+          const v = Math.max(0, d.v[k] || 0), h = m > 0 ? Math.max(v > 0 ? 1.5 : 0, (v / m) * PH) : 0;
+          svg += `<rect class="bar ${CLS[k]}${d.span > 1 ? ' multi' : ''}${isPartial(d) ? ' part' : ''}" x="${(xc(i) - barW / 2).toFixed(1)}" y="${(base - h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}"/>`;
+          if (v === 0) svg += `<line class="zero ${CLS[k]}" x1="${xc(i) - barW / 2}" x2="${xc(i) + barW / 2}" y1="${base - 0.5}" y2="${base - 0.5}"/>`;
+        }
+        hits.push(`<rect class="hit" data-k="${k}" data-i="${i}" x="${L + i * bw}" y="${y}" width="${bw}" height="${HEAD + PH + GAP}"/>`);
+      });
+      y = base + GAP;
     });
-    svg += '</svg>';
-    const rateRow = showRate ? `<div class="rate-row" style="grid-template-columns:repeat(${n},1fr);padding:0 ${R}px 0 ${L}px">${days.map((d) => {
-      if (!d.v) return '<span class="meta">－</span>';
-      return entry ? `<span>${rateTxt(d.v.pv, d.v.imp)}</span>` : `<span>${rateTxt(d.v.like, d.v.pv)}<br>${rateTxt(d.v.comment, d.v.pv)}</span>`;
-    }).join('')}</div>` : '';
-    el.innerHTML = svg + (showRate ? `<div class="rate-head">${entry ? '開封率（PV÷インプレッション）' : 'スキ率（スキ÷PV）／ コメント率（コメント÷PV）'}</div>${rateRow}` : '');
+    // 率の段
+    rates.forEach((k) => {
+      svg += `<line class="sep" x1="${L}" x2="${W - R}" y1="${y}" y2="${y}"/><text class="lbl" x="${L}" y="${y + 12}">${esc(RATE_NAME[k])}（%）</text>`;
+      if (wideNum) {
+        days.forEach((d, i) => { const v = valOf(d, k); svg += `<text class="rnum${isPartial(d) ? ' part' : ''}" x="${xc(i)}" y="${y + 26}" text-anchor="middle">${d.v ? (v == null ? '－' : (v * 100).toFixed(2)) : ''}</text>`; });
+      } else {
+        // 狭いときは小さな点で高さを表す（数字はタップで出る）
+        const vs = days.map((d) => valOf(d, k)).filter((v) => v != null);
+        const mx = Math.max(0.0001, ...vs);
+        days.forEach((d, i) => { const v = valOf(d, k); if (v != null) svg += `<circle class="rdot${isPartial(d) ? ' part' : ''}" cx="${xc(i)}" cy="${(y + RH - 5 - (v / mx) * (RH - 22)).toFixed(1)}" r="2.2"/>`; });
+      }
+      days.forEach((d, i) => hits.push(`<rect class="hit" data-k="${k}" data-i="${i}" x="${L + i * bw}" y="${y}" width="${bw}" height="${RH}"/>`));
+      y += RH;
+    });
+    svg += `<line class="sep" x1="${L}" x2="${W - R}" y1="${y}" y2="${y}"/>`;
+    // 日ごとの薄い縦線
+    const lines = days.map((d, i) => `<line class="dayline" x1="${xc(i)}" x2="${xc(i)}" y1="${panelTop + HEAD}" y2="${y}"/>`).join('');
+    svg += dateRow(days, xc, y + 14, n, every, r.kind, bw >= 44);
+    const H = y + (n <= 14 ? 50 : 40);
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="日ごとの動き（棒グラフ）"><g class="daylines">${lines}</g>${svg}${hits.join('')}</svg>`;
     const multi = days.filter((d) => d.span > 1).length, none = days.filter((d) => !d.v && !d.future).length;
-    $('#flowHint').textContent = `上下の棒は、それぞれ期間内の最大値を満タンにした長さです（上と下の長さを比べても率は分かりません）。${showRate ? '' : '率は棒にカーソルを合わせる（スマホはタップ）と出ます。'}${none ? `灰色は記録のない日（${none}日）です。` : ''}${multi ? `薄い色の棒は、前の記録が2日以上前なので数日分がまとまっています（${multi}日）。` : ''}`;
-    const show = (ev, i) => { const d = days[i]; $('#tooltip').innerHTML = `<div><b>${fmtDate(d.date)}（${wd(d.date)}）</b>${d.span > 1 ? `・${d.span}日分` : ''}</div>${tipLines(d)}`; placeTip(ev); };
-    el.querySelectorAll('.hit').forEach((h) => {
-      h.addEventListener('mousemove', (ev) => show(ev, +h.dataset.i));
-      h.addEventListener('click', (ev) => show(ev, +h.dataset.i));
-      h.addEventListener('mouseleave', () => { $('#tooltip').hidden = true; });
+    $('#flowHint').textContent = `${beforeFirst(days)}棒の長さは、段ごとにその段の最大値を基準にしています。段どうしの棒の長さは比べられません（率は下の数字で見てください）。${wideNum ? '' : '率の段の点は高さで率の大小を表します（数字はカーソルを合わせる・タップで出ます）。'}${none ? `記録のない日（${none}日）は棒を描かず、日付の下に「${bw >= 44 ? '記録なし' : '－'}」と出しています。` : ''}${multi ? `薄い色の棒は、前の記録が2日以上前なので数日分がまとまっています（${multi}日）。` : ''}${days.some(isPartial) ? '今日は記録の途中なので薄い色です。' : ''}`;
+    bindHits(el, (h) => {
+      el.querySelectorAll('.hit.on').forEach((x) => x.classList.remove('on'));
+      if (!h) return;
+      h.classList.add('on');
+      $('#tooltip').innerHTML = tipOne(days[+h.dataset.i], h.dataset.k);
     });
   }
 
@@ -536,7 +605,7 @@ const PonPeriods = (() => {
 
   /* ---------- 率（開封率・スキ率・コメント率） v0.6.0 ③ ---------- */
   const rateConf = () => ({ show: true, mode: 'period', ...((S.settings && S.settings.rates) || {}) });
-  async function setRate(patch) { S.settings.rates = { ...rateConf(), ...patch }; await NDB.kvSet('settings', S.settings); renderRates(); }
+  async function setRate(patch) { S.settings.rates = { ...rateConf(), ...patch }; await saveSettings('rates'); renderRates(); }
   /**
    * 共有用の数字（v0.6.0 ⑤）：今「期間の動き」で選んでいる期間と、比べる期間。
    * n … 伸びた記事の上位いくつまで、metric … 並べる指標
@@ -611,24 +680,47 @@ const PonPeriods = (() => {
     };
     body.innerHTML = `<p class="meta">${esc(head)}</p>
       <div class="kpis rate-kpis">
-        ${tile('ctr', 'インプレッション → PV', '開封率（CTR）', now.ctrPv, now.ctrImp, 'PV', 'インプレッション')}
+        ${tile('ctr', 'インプレッション → PV', '開封率', now.ctrPv, now.ctrImp, 'PV', 'インプレッション')}
         ${tile('likeRate', 'PV → スキ', 'スキ率', now.like, now.pv, 'スキ', 'PV')}
         ${tile('commentRate', 'PV → コメント', 'コメント率', now.comment, now.pv, 'コメント', 'PV')}
       </div>
-      <p class="hint">前の期間との差は「ポイント」（率どうしの引き算。例：7.5%→8.5%は＋1.0ポイント）で出しています。分母が0のときは「－」です。${now.noImp ? `開封率は、インプレッションが0の記事（noteがインプレッションを数えていない古い記事など・${fmt(now.noImp)}本）を分子・分母の両方から外しています。` : ''}スキとコメントを足した「反応率」のような数字は出しません（同じ人がスキもコメントもすることがあり、人の割合として読めないため）。</p>`;
+      <p class="hint">開封率（CTR）は、記事が表示された回数（インプレッション）のうち、開かれた（PV）割合です。前の期間との差は「ポイント」（率どうしの引き算。例：7.5%→8.5%は＋1.0ポイント）で出しています。分母が0のときは「－」です。${now.noImp ? `開封率は、インプレッションが0の記事（noteがインプレッションを数えていない古い記事など・${fmt(now.noImp)}本）を分子・分母の両方から外しています。` : ''}スキとコメントを足した「反応率」のような数字は出しません（同じ人がスキもコメントもすることがあり、人の割合として読めないため）。</p>`;
+  }
+
+  /* ---------- v0.6.2 A：要る期間の記録が読み込んであるか ---------- */
+  /** 今の期間から count 個前の期間までに要る、いちばん古い開始日（日付だけの並びで計算する） */
+  function needFrom(count) {
+    if (typeof PonData === 'undefined') return null;
+    const stubs = PonData.dateStubs(), sv = sel();
+    let min = null;
+    for (let k = 0; k <= count; k++) { const r = resolve(stubs, sv, P.back + k); if (!r) break; if (!min || r.start < min) min = r.start; }
+    return min;
+  }
+  const loading = (el) => { if (el) el.innerHTML = '<p class="meta loading" role="status">古い期間の記録を読み込んでいます…</p>'; };
+  /** 読み込みが要れば読み込んでから then を呼ぶ。すぐ描けるなら true */
+  function ready(count, el, then) {
+    const need = needFrom(count);
+    if (!need || PonData.hasFrom(need)) return true;
+    loading(el);
+    PonData.ensureFrom(need).then(then, (e) => { if (el) el.innerHTML = `<p class="warn">記録を読み込めませんでした：${esc(e.message || e)}</p>`; });
+    return false;
   }
 
   function render() {
-    renderRates();
     const cur = latest();
     const card = $('#periodCard');
-    if (!cur) { card.hidden = true; $('#growthList').innerHTML = ''; $('#growthMeta').textContent = ''; $('#compareBody').innerHTML = ''; return; }
+    const bar = $('#periodBar'); if (bar) bar.hidden = !cur;
+    if (!cur) { renderRates(); card.hidden = true; $('#growthList').innerHTML = ''; $('#growthMeta').textContent = ''; $('#compareBody').innerHTML = ''; return; }
     card.hidden = false;
     picker($('#growthPicker'), sel(), setSel, 'growth');
     $('#growthMetric').value = P.listMetric;
+    // 今の期間と前の期間（率・期間の動き・伸びた記事）
+    if (!ready(1, $('#periodBody'), render)) { loading($('#ratesBody')); loading($('#growthList')); return; }
+    renderRates();
     renderSummary();
     renderList();
-    renderCompare();
+    // 期間ごとの比較は8区切りぶん要るので、足りなければ後から読んで描く
+    if (ready(8, $('#compareBody'), renderCompare)) renderCompare();
   }
 
   document.addEventListener('change', (e) => {
@@ -643,7 +735,7 @@ const PonPeriods = (() => {
     const f = e.target.closest && e.target.closest('[data-flow]');
     if (f) { P.flow = f.dataset.flow; renderSummary(); }
     const c = e.target.closest && e.target.closest('[data-ctype]');
-    if (c) { S.settings.periodChart = c.dataset.ctype; NDB.kvSet('settings', S.settings); renderSummary(); }
+    if (c) { S.settings.periodChart = c.dataset.ctype; saveSettings('periodChart'); renderSummary(); }
   });
   let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (latest() && !$('#tab-overview').hidden) renderSummary(); }, 150); });
 

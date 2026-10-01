@@ -19,9 +19,11 @@ const PonCardTrend = (() => {
   const nextMonth = (ym) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 7); };
 
   /** 日ごとの期間 → 開始日・終了日。back はいくつ前か（0＝最新）。無ければ null */
+  /** いちばん古い記録の日（画面では、読み込んでいない古い記録も含めた本当の最初の日） */
+  const firstOf = (snaps) => (typeof PonData !== 'undefined' && PonData.snaps === snaps && PonData.firstDate()) || snaps[0].date;
   function range(snaps, sel, back = 0) {
     if (!snaps.length) return null;
-    const first = snaps[0].date, last = snaps[snaps.length - 1].date;
+    const first = firstOf(snaps), last = snaps[snaps.length - 1].date;
     const kind = (sel && sel.kind) || '28';
     let s, e;
     if (kind === 'all') { if (back) return null; return { kind, start: first, end: last, len: diffDays(first, last) + 1, back: 0 }; }
@@ -131,11 +133,27 @@ const PonCardTrend = (() => {
   const ymText = (ym) => { const [y, m] = ym.split('-').map(Number); return `${y}年${m}月`; };
   const conf = () => ({ show: true, metric: 'pv', gran: 'day', kind: '28', ...((S.settings && S.settings.cardTrend) || {}) });
 
+  /** 記録のある日数（row は配列か、PonData.columns の並び） */
+  const recDays = (row) => (row && row.has ? row.has.reduce((a, v) => a + v, 0) : (row || []).filter(Boolean).length);
+  /** v0.6.2 A：グラフに要る期間の記録が読み込んであるか。無ければ読み込んでから then */
+  function needStart(c, all) {
+    if (typeof PonData === 'undefined') return null;
+    if (all || c.gran === 'month' || c.kind === 'all') return PonData.firstDate();
+    const r = range(PonData.dateStubs(), c, T.back);
+    return r ? r.start : null;
+  }
+  function ensure(c, then, all) {
+    const n = needStart(c, all);
+    if (!n || PonData.hasFrom(n)) return true;
+    PonData.ensureFrom(n).then(then);
+    return false;
+  }
   function idx() {
+    if (typeof PonData !== 'undefined' && PonData.snaps === S.snapshots) return PonData.columns();
     if (T.idxOf !== S.snapshots || T.idxLen !== S.snapshots.length) { T.idx = index(S.snapshots); T.idxOf = S.snapshots; T.idxLen = S.snapshots.length; }
     return T.idx;
   }
-  const itemOf = (key) => { const l = S.snapshots[S.snapshots.length - 1]; return l && (l.items || []).find((i) => i.key === key); };
+  const itemOf = (key) => { const l = S.snapshots[S.snapshots.length - 1]; return l && (l.get ? l.get(key) : (l.items || []).find((i) => i.key === key)); };
 
   /** 1記事の点の並び（gran: 'day' | 'month'） */
   function pointsFor(key, c, r) {
@@ -248,7 +266,7 @@ const PonCardTrend = (() => {
   async function setConf(patch, keepBack) {
     S.settings.cardTrend = { ...conf(), ...patch };
     if (!keepBack) T.back = 0;
-    await NDB.kvSet('settings', S.settings);
+    await saveSettings('cardTrend');
     renderControls();
     redraw();
   }
@@ -266,8 +284,9 @@ const PonCardTrend = (() => {
     const unit = c.kind === 'all' ? '' : `${r ? r.len : Number(c.kind)}日`;
     const min = snaps[0].date, max = snaps[snaps.length - 1].date;
     const rr = r || range(snaps, c, 0) || {};
-    el.innerHTML = `<label class="check"><input type="checkbox" id="eyeShow" ${S.settings.showEyecatch !== false ? 'checked' : ''}> 見出し画像</label>
-      <label class="check"><input type="checkbox" id="trendShow" ${c.show ? 'checked' : ''}> 推移のグラフ</label>
+    const ok = !c.show || ensure(c, () => { renderControls(); redraw(); });
+    el.innerHTML = `${ok ? '' : '<p class="meta loading" role="status">古い期間の記録を読み込んでいます…</p>'}<label class="check"><input type="checkbox" id="eyeShow" ${S.settings.showEyecatch !== false ? 'checked' : ''}> 見出し画像</label>${typeof PonSettings !== 'undefined' ? PonSettings.link('eyecatch') : ''}
+      <label class="check"><input type="checkbox" id="trendShow" ${c.show ? 'checked' : ''}> 推移のグラフ</label>${typeof PonSettings !== 'undefined' ? PonSettings.link('cardTrend') : ''}
       <span class="trend-opts" ${c.show ? '' : 'hidden'}>
         <label>指標 <select id="trendMetric">${Object.entries(LABEL).map(([k, l]) => `<option value="${k}" ${k === c.metric ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <span class="seg" role="group" aria-label="日ごと・月ごと">
@@ -313,11 +332,14 @@ const PonCardTrend = (() => {
   function draw(el) {
     const key = el.dataset.curve;
     const c = conf();
+    const n = needStart(c);
+    if (n && typeof PonData !== 'undefined' && !PonData.hasFrom(n)) { el.innerHTML = '<p class="meta acurve-msg loading">読み込んでいます…</p>'; return; }
     const r = range(S.snapshots, c, T.back);
     const pts = pointsFor(key, c, r);
     if (!pts || !pts.some((p) => p.total != null)) {
       const it = itemOf(key), pub = it ? jstDay(it.publishedAt) : '';
-      el.innerHTML = `<p class="meta acurve-msg">${r && pub && pub > r.end && c.gran !== 'month' ? 'この期間はまだ公開前です。' : 'この期間の記録はありません。'}</p>`;
+      const first = typeof PonData !== 'undefined' ? PonData.firstDate() : (S.snapshots[0] || {}).date;
+      el.innerHTML = `<p class="meta acurve-msg">${r && pub && pub > r.end && c.gran !== 'month' ? 'この期間はまだ公開前です。' : r && first && r.end < first ? `この期間は記録を始めた日（${esc(fmtDate(first))}）より前なので、記録がありません。` : 'この期間の記録はありません。'}</p>`;
       return;
     }
     const box = document.createElement('div');
@@ -364,13 +386,15 @@ const PonCardTrend = (() => {
   async function renderBig() {
     const P = T.pop; if (!P) return;
     const box = $('#trendPop .pop');
+    // 大きく見るときは全期間を使うので、読み込んでいなければ読んでから描く
+    if (!ensure(conf(), renderBig, true)) { box.innerHTML = '<div class="pop-head"><span class="meta">推移</span><span class="pop-nav"><button class="btn small" data-pop="close" aria-label="閉じる">×</button></span></div><p class="meta loading" role="status">記録を読み込んでいます…</p>'; return; }
     const it = itemOf(P.key) || { title: '', url: '' };
     const row = idx().get(P.key) || [];
-    const days = row.filter(Boolean).length;
+    const days = recDays(row);
     const i = P.order.indexOf(P.key);
     const c = { metric: P.metric, gran: P.gran };
     const snaps = S.snapshots;
-    const pts = pointsFor(P.key, c, snaps.length ? { start: snaps[0].date, end: snaps[snaps.length - 1].date } : null) || [];
+    const pts = pointsFor(P.key, c, snaps.length ? { start: firstOf(snaps), end: snaps[snaps.length - 1].date } : null) || [];
     if (P.gran === 'month' && P.sel == null) P.sel = pts.length - 1;
     const pubDay = jstDay(it.publishedAt);
     box.innerHTML = `<div class="pop-head"><span class="meta">推移</span>
@@ -420,7 +444,7 @@ const PonCardTrend = (() => {
   document.addEventListener('change', (e) => {
     const t = e.target;
     if (!t || !t.id) return;
-    if (t.id === 'eyeShow') { S.settings.showEyecatch = t.checked; NDB.kvSet('settings', S.settings).then(redraw); }
+    if (t.id === 'eyeShow') { S.settings.showEyecatch = t.checked; saveSettings('showEyecatch').then(redraw); }
     else if (t.id === 'trendShow') setConf({ show: t.checked });
     else if (t.id === 'trendMetric') setConf({ metric: t.value }, true);
     else if (t.id === 'popMetric' && T.pop) { T.pop.metric = t.value; renderBig(); }

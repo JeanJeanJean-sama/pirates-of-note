@@ -13,6 +13,13 @@ const signed = (n) => (n == null ? '–' : n > 0 ? `+${fmt(n)}` : n < 0 ? `−${
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = (iso) => { if (!iso) return '–'; const d = new Date(iso); return Number.isNaN(d.getTime()) ? '–' : `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`; };
 const fmtDateTime = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '–' : `${fmtDate(iso)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const jpDateTime = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '–' : `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours()}時${String(d.getMinutes()).padStart(2, '0')}分`; };
+const shortDateTime = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '–' : `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+/** v0.6.2 M：記録の時刻の表示。確定した日は「9/30（その日の終わり・確定）」、今日の記録は「10/1 10:12 の記録（途中）」 */
+const jstTodayStr = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+const md = (date) => { const [, m, d] = String(date).split('-').map(Number); return `${m}/${d}`; };
+const recWhenHead = (s) => (s.final ? `${md(s.date)}（その日の終わり・確定）の記録` : s.date === jstTodayStr() ? `${shortDateTime(s.capturedAt)} の記録（途中）` : `${jpDateTime(s.capturedAt)}の記録`);
+const recWhenShort = (s) => (s.final ? `${md(s.date)}・確定` : shortDateTime(s.capturedAt));
 const daysBetween = (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 864e5);
 
 const METRIC_LABEL = { pv: 'ページビュー', imp: 'インプレッション', like: 'スキ', comment: 'コメント', follower: 'フォロワー' };
@@ -21,31 +28,162 @@ const S = { snapshots: [], me: null, unreplied: [], threadReplies: [], commentCh
 
 /* ---------------- 読み込み ---------------- */
 async function load() {
-  const [snapshots, me, unreplied, dismissed, myComments, settings, logs, threads, incomplete] = await Promise.all([
-    NDB.getAll('snapshots'), NDB.kvGet('me', null), NDB.getAll('unreplied'), NDB.kvGet('dismissed', {}),
-    NDB.getAll('myComments'), NDB.kvGet('settings', {}), NDB.kvGet('logs', []), NDB.kvGet('threadReplies', {}), NDB.kvGet('commentCheckIncomplete', false),
+  // v0.6.2：毎日の記録は PonData が最新と直近の期間だけ読む（古い期間は要るときに足す）
+  const [snapshots, me, unreplied, dismissed, myComments, settings, logs, threads, incomplete, lookAt] = await Promise.all([
+    PonData.init(), NDB.kvGet('me', null), NDB.getAll('unreplied'), NDB.kvGet('dismissed', {}),
+    NDB.getAll('myComments'), NDB.kvGet('settings', {}), NDB.kvGet('logs', []), NDB.kvGet('threadReplies', {}), NDB.kvGet('commentCheckIncomplete', false), NDB.kvGet('lastCommentLookAt', 0),
   ]);
   S.threadReplies = Object.values(threads).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
   S.commentCheckIncomplete = incomplete;
-  S.snapshots = snapshots.sort((a, b) => a.date.localeCompare(b.date));
-  Object.assign(S, { me, unreplied, dismissed, myComments, logs, settings: { autoCollect: true, checkComments: true, recordMyComments: true, saveBodies: true, perkCheck: true, ...settings } });
+  S.lastCommentLookAt = lookAt || 0;
+  S.snapshots = snapshots; // PonData の読み込んである分（古い順。同じ配列）
+  Object.assign(S, { me, unreplied, dismissed, myComments, logs, settings: { autoCollect: true, finalizePrev: true, checkComments: true, recordMyComments: true, saveBodies: true, perkCheck: true, ...settings } });
   renderAll();
+  startMigration();
 }
+
+/* ---------------- v0.6.2 A：記録の形の引っ越し（古い形 → 新しい形。1日分ずつ） ---------------- */
+async function startMigration() {
+  if (typeof PonData === 'undefined' || PonData.migrating().running || !(await PonData.needsMigrate())) return;
+  const el = $('#fmtBanner');
+  const noticed = await NDB.kvGet('fmt2Notice', 0);
+  const show = (html) => { if (el) { el.hidden = false; el.innerHTML = html; } };
+  if (!noticed) {
+    // 1回だけの案内（押さなくても進む）
+    await NDB.kvSet('fmt2Notice', Date.now());
+    show(`<p><b>記録の形を新しくします。</b>長く使っても画面が重くならないように、毎日の記録を小さな形に書き換えます（数字は変わりません）。念のため ⬇ バックアップしておくと安心です。押さなくても、このまま進みます。</p>
+      <p class="btn-row"><button class="btn dl small" data-action="json-backup">⬇ バックアップをダウンロード（JSON）</button> <span class="meta" id="fmtProgress">書き換えを始めます…</span></p>`);
+  }
+  const r = await PonData.migrate((m) => { const p = $('#fmtProgress'); if (p) p.textContent = `書き換えています… ${m.done} / ${m.total}日分`; });
+  const p = $('#fmtProgress');
+  if (p) p.textContent = r.changed ? `書き換えが終わりました（${r.changed}日分${r.failed ? `。${r.failed}日分は数字を確かめられなかったので、古い形のまま残しました（そのまま読めます）` : ''}）。` : '書き換えるものはありませんでした。';
+  if (el && !noticed) setTimeout(() => { el.hidden = true; }, 15000);
+}
+
+/* ---------------- v0.6.2 B：開いているタブだけ描く ----------------
+ * renderAll は、どのタブにも出るもの（名前・色・タブの数字・近い締切・知らせ）と、今開いているタブだけを描く。
+ * ほかのタブは「描き直しが必要」の印（DRAWN から外す）にして、次に開いたときに描く。 */
+const DRAWN = new Set();
+/** 今開いているタブ（記事の中の「マップ」は 'map'） */
+const curTab = () => { const s = $$('.tab').find((t) => !t.hidden); return s ? s.id.replace(/^tab-/, '') : 'overview'; };
+/** v0.6.2 D：古いタブの名前・新しい名前のどちらで開いても正しいタブへ */
+const TAB_ALIAS = { plans: 'calendar', schedule: 'calendar', settings: 'data', mapview: 'map' };
+/** タブを開く（map は「記事」の中の「マップ」） */
+function openTab(name) {
+  const t = TAB_ALIAS[name] || name;
+  if (!/^[a-z]+$/.test(String(t)) || !$(`#tab-${t}`)) return; // Web版の #pon=… などは、タブの名前ではない
+  const navName = t === 'map' ? 'articles' : t;
+  $$('.tabs button').forEach((x) => x.setAttribute('aria-selected', String(x.dataset.tab === navName)));
+  $$('.tab').forEach((s) => { s.hidden = s.id !== `tab-${t}`; });
+  $$('[data-asub]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.asub === t)));
+  drawTab(t);
+  if (t === 'overview') renderChart();
+  history.replaceState(null, '', `#${t}`);
+  showActiveTab();
+  // 各機能が「タブを開いた」ことを知るための知らせ
+  document.dispatchEvent(new CustomEvent('pon-tab', { detail: t }));
+}
+/** スマホ幅：今のタブが見える位置まで動かし、横に続きがあれば印を出す */
+function showActiveTab() {
+  const nav = $('#tabsNav'); if (!nav) return;
+  const b = nav.querySelector('button[aria-selected="true"]');
+  if (b && nav.scrollWidth > nav.clientWidth) { const l = b.offsetLeft - nav.offsetLeft, r = l + b.offsetWidth; if (l < nav.scrollLeft || r > nav.scrollLeft + nav.clientWidth) nav.scrollTo({ left: Math.max(0, l - 24), behavior: 'smooth' }); }
+  tabsEdge();
+}
+function tabsEdge() {
+  const nav = $('#tabsNav'), w = $('#tabsWrap'); if (!nav || !w) return;
+  const more = nav.scrollWidth - nav.clientWidth > 2;
+  const left = more && nav.scrollLeft > 2, right = more && nav.scrollLeft < nav.scrollWidth - nav.clientWidth - 2;
+  w.classList.toggle('more-left', left); w.classList.toggle('more-right', right);
+  const bl = w.querySelector('.tabs-more.left'), br = w.querySelector('.tabs-more.right');
+  if (bl) bl.hidden = !left; if (br) br.hidden = !right;
+}
+const TAB_DRAW = {
+  overview: () => renderOverview(),
+  articles: () => { renderArticles(); if (window.PonViews) window.PonViews.refreshCards(); if (typeof PonSearch !== 'undefined') PonSearch.render(); },
+  map: () => { if (window.PonViews) window.PonViews.renderMap(); },
+  comments: () => renderComments(),
+  calendar: () => { if (typeof PonCalendar !== 'undefined') PonCalendar.render(); if (typeof PonMissions !== 'undefined') PonMissions.render(); },
+  crew: () => { if (window.PonPerks) window.PonPerks.render(); },
+  data: () => { if (typeof PonSettings !== 'undefined') PonSettings.render(); renderData(); if (window.PonBodies && window.PonBodies.renderExport) window.PonBodies.renderExport(); if (typeof PonAccount !== 'undefined') PonAccount.render(); },
+};
+/** そのタブを描く（描いてあって、データが変わっていなければ何もしない） */
+function drawTab(t, force) {
+  if (!TAB_DRAW[t] || (!force && DRAWN.has(t))) return;
+  DRAWN.add(t);
+  TAB_DRAW[t]();
+}
+/** データが変わった：どのタブも「描き直しが必要」にする */
+const markDirty = () => DRAWN.clear();
 
 function renderAll() {
   $('#whoami').textContent = S.me ? `${S.me.nickname}（@${S.me.urlname}）` : 'noteにログインした状態で note.com を開くと記録が始まります';
-  renderOverview();
-  renderArticles();
-  renderComments();
-  renderData();
-  if (window.PonViews) window.PonViews.render();
-  if (window.PonPerks) window.PonPerks.render();
-  if (window.PonBodies && window.PonBodies.renderExport && !$('#tab-data').hidden) window.PonBodies.renderExport();
-  if (typeof PonSearch !== 'undefined') PonSearch.render();
-  if (typeof PonCalendar !== 'undefined') PonCalendar.render();
-  if (typeof PonMissions !== 'undefined') PonMissions.render();
+  if (typeof PonColors !== 'undefined') PonColors.apply();
+  applyFolds();
+  renderBadges();
+  if (window.PonPerks) window.PonPerks.render({ headerOnly: true }); // 名前の前の称号・着せ替え
+  if (typeof PonCalendar !== 'undefined') PonCalendar.renderSoon(); // 近い締切（概要の上）とタブの数字
   if (typeof PonFeatures !== 'undefined') PonFeatures.apply();
-  if (typeof PonAccount !== 'undefined') PonAccount.render();
+  if (typeof PonAccount !== 'undefined') PonAccount.renderBanner();
+  if (typeof PonBeta !== 'undefined') PonBeta.check();
+  if (typeof PonGuide !== 'undefined') { PonGuide.renderStart(); if (!S.introShown) { S.introShown = true; PonGuide.maybeIntro(); } }
+  markDirty();
+  drawTab(curTab());
+}
+
+/* ---------------- v0.6.2 E：カードを折りたたむ（たたんだ状態は設定に記録） ---------------- */
+const FOLD_CARDS = ['ratesCard', 'periodCard', 'chartCard', 'growthCard', 'compareCard'];
+/** S.settings の中の、変えた項目だけを記録する（v0.6.2 F：ほかの項目は記録されている今の値のまま） */
+const saveSettings = (...keys) => PonStore.patchSettings(Object.fromEntries(keys.map((k) => [k, S.settings[k]])));
+/** 設定を1項目だけ変えて記録する（ほかの項目は、記録されている今の値のまま） */
+async function setSetting(key, value) {
+  const next = await PonStore.patchSettings({ [key]: value });
+  S.settings = { ...S.settings, [key]: next[key] };
+  return next;
+}
+function applyFolds() {
+  const f = (S.settings && S.settings.folded) || {};
+  for (const id of FOLD_CARDS) {
+    const card = document.getElementById(id);
+    if (!card) continue;
+    const head = card.querySelector('.card-head');
+    let b = card.querySelector('.fold-btn');
+    if (!b && head) {
+      b = document.createElement('button');
+      b.type = 'button'; b.className = 'btn small fold-btn'; b.dataset.fold = id;
+      head.appendChild(b);
+    }
+    const folded = !!f[id];
+    card.classList.toggle('folded', folded);
+    if (b) { b.textContent = folded ? 'ひらく ▾' : 'たたむ ▴'; b.setAttribute('aria-expanded', String(!folded)); b.setAttribute('aria-label', `${(head.querySelector('h2') || {}).textContent || ''}を${folded ? 'ひらく' : 'たたむ'}`.trim()); }
+  }
+}
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest && e.target.closest('[data-fold]');
+  if (!b) return;
+  const id = b.dataset.fold;
+  const f = { ...((S.settings && S.settings.folded) || {}) };
+  if (f[id]) delete f[id]; else f[id] = true;
+  await setSetting('folded', f);
+  applyFolds();
+  if (!f[id]) { if (id === 'chartCard') renderChart(); else if (typeof PonPeriods !== 'undefined') PonPeriods.render(); }
+});
+/** 期間の選択の固定：上の見出しの高さのすぐ下に止める */
+function watchHeadHeight() {
+  const top = $('header.top') || $('.top');
+  if (!top) return;
+  const set = () => document.documentElement.style.setProperty('--head-h', `${top.offsetHeight}px`);
+  set();
+  if ('ResizeObserver' in window) new ResizeObserver(set).observe(top); else addEventListener('resize', set);
+}
+
+/** タブの数字（未返信など）。どのタブを開いていても更新する */
+function renderBadges() {
+  const activeRoots = S.unreplied.reduce((a, u) => a + (u.pending || []).filter((c) => !S.dismissed[c.commentKey]).length, 0);
+  const activeThreads = PonThreads.badgeCount(S.threadReplies, S.dismissed, S.settings);
+  const active = activeRoots + activeThreads;
+  const badge = $('#unrepliedBadge');
+  if (badge) { badge.hidden = !active; badge.textContent = active; }
 }
 
 const latest = () => S.snapshots[S.snapshots.length - 1] || null;
@@ -56,6 +194,7 @@ function renderOverview() {
   const cur = latest(), prev = previous();
   $('#emptyState').hidden = !!cur;
   $('#kpis').innerHTML = '';
+  $('#totalsHead').hidden = !cur;
   if (!cur) { $('#chart').innerHTML = ''; $('#growthList').innerHTML = ''; $('#snapMeta').textContent = ''; if (typeof PonPeriods !== 'undefined') PonPeriods.render(); return; }
 
   const span = prev ? daysBetween(prev.date, cur.date) : 0;
@@ -67,13 +206,20 @@ function renderOverview() {
     ['follower', 'フォロワー', cur.followerCount, prev && prev.followerCount],
     ['articles', '記事数', cur.totals.articles, prev && prev.totals.articles],
   ];
+  // (1)(2) 累計の見出しと、前回比の「前回」がいつの記録か
+  const prevNote = prev
+    ? `前回比＝前回（${esc(recWhenShort(prev))}${span >= 1 ? `・${span}日前` : ''}）の記録と比べて`
+    : '前回の記録がまだありません（前回比は2回目の記録から出ます）';
+  $('#totalsHead').innerHTML = `<div class="totals-title"><span class="totals-badge">累計</span><span class="totals-name">これまでの合計</span></div>
+    <div class="totals-when"><span>${esc(recWhenHead(cur))}</span><span class="totals-prev" id="prevNote">${prevNote}</span></div>`;
   $('#kpis').innerHTML = tiles.map(([, label, v, p]) => {
     const d = v != null && p != null ? v - p : null;
     const cls = d > 0 ? 'up' : d < 0 ? 'down' : '';
     return `<div class="kpi"><div class="label">${label}</div><div class="value">${fmt(v)}</div>
       <div class="delta ${cls}">${prev ? `前回比 ${signed(d)}${span > 1 ? `（${span}日分）` : ''}` : '前回データなし'}</div></div>`;
   }).join('');
-  $('#snapMeta').textContent = `数値はすべて全期間の累計です。　最終記録: ${fmtDateTime(cur.capturedAt)}　／　noteの集計時刻: ${cur.statUpdatedAt ? fmtDateTime(cur.statUpdatedAt) : '–'}　／　記録日数: ${S.snapshots.length}日`;
+  const finN = S.snapshots.filter((x) => x.final).length;
+  $('#snapMeta').textContent = `最終記録: ${fmtDateTime(cur.capturedAt)}${finN ? `　／　確定した日: 読み込んだ ${S.snapshots.length}日のうち ${finN}日` : ''}　／　noteの集計時刻: ${cur.statUpdatedAt ? fmtDateTime(cur.statUpdatedAt) : '–'}　／　記録日数: ${PonData.count()}日`;
 
   renderChart();
   if (typeof PonPeriods !== 'undefined') PonPeriods.render(); else renderGrowth(cur, prev, span);
@@ -107,9 +253,12 @@ function renderChart() {
   const label = METRIC_LABEL[S.metric];
   $('#chartTitle').textContent = `${label}の${S.mode === 'diff' ? '増えた数' : '累計'}`;
   const gaps = data.filter((d) => d.span > 1).length;
-  $('#chartHint').textContent = S.mode === 'diff'
-    ? `前回の記録からの増加数です。${gaps ? `記録していない日があった区間（${gaps}か所）は、数日分がまとめて1点（白抜きの点）になっています。` : ''}無料版では、使い始めた日から1日ずつ記録がたまっていきます。`
-    : '';
+  // v0.6.2 A：読み込んである期間だけ描く。全期間は「全期間を見る」で読み込む
+  const part = typeof PonData !== 'undefined' && !PonData.allLoaded() && S.snapshots.length
+    ? `<span class="chart-range">${esc(fmtDate(S.snapshots[0].date))}〜の${fmt(S.snapshots.length)}日分を表示しています（記録は全部で${fmt(PonData.count())}日分）。<button type="button" class="linkish" data-action="chart-all">全期間を見る</button></span>` : '';
+  $('#chartHint').innerHTML = (S.mode === 'diff'
+    ? esc(`前回の記録からの増加数です。${gaps ? `記録していない日があった区間（${gaps}か所）は、数日分がまとめて1点（白抜きの点）になっています。` : ''}無料版では、使い始めた日から1日ずつ記録がたまっていきます。`)
+    : '') + part;
   if (data.length < (S.mode === 'diff' ? 1 : 2)) {
     el.innerHTML = `<div class="nodata">${S.mode === 'diff' ? '2日分の記録がたまると、増えた数のグラフが表示されます。<br>明日以降、noteを開くと自動で記録されます。' : '2日分以上の記録がたまるとグラフが表示されます。'}</div>`;
     return;
@@ -126,7 +275,9 @@ function renderChart() {
   const path = data.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(d.value).toFixed(1)}`).join('');
   const showDots = data.length <= 60;
 
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}の推移">
+  // v0.6.1 (7)：指標の色（色の設定で決めた色）。フォロワーは指標の色がないので着せ替えの色
+  const mc = { pv: 'var(--c-pv)', imp: 'var(--c-imp)', like: 'var(--c-like)', comment: 'var(--c-comment)' }[S.metric] || 'var(--series-1)';
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}の推移" style="--m-c: ${mc}">
     <g class="axis">${ticks.map((t) => `<line class="gridline" x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}"/><text x="${m.l - 8}" y="${y(t) + 4}" text-anchor="end">${fmt(t)}</text>`).join('')}
       ${data.map((d, i) => (i % every === 0 || i === data.length - 1 ? `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${d.date.slice(5).replace('-', '/')}</text>` : '')).join('')}</g>
     ${y0 < 0 ? `<line class="baseline" x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}"/>` : ''}
@@ -199,20 +350,38 @@ function renderComments() {
     .filter((u) => u.items.length)
     .sort((a, b) => maxDate(b.items) .localeCompare(maxDate(a.items)));
   const activeRoots = S.unreplied.reduce((a, u) => a + (u.pending || []).filter((c) => !S.dismissed[c.commentKey]).length, 0);
-  const threads = S.threadReplies.filter((t) => showDismissed || !S.dismissed[`thr:${t.id}`]);
-  const activeThreads = S.threadReplies.filter((t) => !S.dismissed[`thr:${t.id}`]).length;
+  // v0.6.2 J：要確認は、判定で「最後が自分以外」になったやり取りだけ（0.6.1 までの記録は判定し直すまで今までどおり）
+  const dk = (t) => PonThreads.dismissKey(t);
+  const listed = (t) => (t.rootKey ? t.needs : true) && (showDismissed || !S.dismissed[dk(t)]);
+  const threads = S.threadReplies.filter((t) => !PonThreads.isMineOnOther(t) && listed(t));
+  // v0.6.2 L：他人の記事で、自分のコメントへの返信（未確認）
+  const mineReplies = S.threadReplies.filter((t) => PonThreads.isMineOnOther(t) && listed(t)).sort((a, b) => String(b.lastAt || '').localeCompare(String(a.lastAt || '')));
+  const activeThreads = S.threadReplies.filter((t) => !PonThreads.isMineOnOther(t) && PonThreads.shows(t, S.dismissed)).length;
+  const activeMine = S.threadReplies.filter((t) => PonThreads.isMineOnOther(t) && PonThreads.shows(t, S.dismissed)).length;
   const active = activeRoots + activeThreads;
-  const badge = $('#unrepliedBadge');
-  badge.hidden = !active; badge.textContent = active;
-  const lastCheck = S.unreplied.reduce((a, u) => Math.max(a, u.checkedAt || 0), 0);
+  renderBadges();
+  const lastCheck = Math.max(S.lastCommentLookAt || 0, S.unreplied.reduce((a, u) => Math.max(a, u.checkedAt || 0), 0));
   const cur = latest();
   const withComments = cur ? cur.items.filter((i) => i.comment > 0).length : 0;
   const checkedN = cur ? cur.items.filter((i) => i.comment > 0 && S.unreplied.some((u) => u.noteKey === i.key)).length : 0;
-  $('#unrepliedMeta').textContent = `${active}件・コメントのある${withComments}記事のうち${checkedN}記事を確認済み${S.commentCheckIncomplete ? '（残りは次にnoteを開いたときに確認）' : ''}${lastCheck ? `・最終確認 ${fmtDateTime(new Date(lastCheck).toISOString())}` : ''}`;
-  $('#threadList').innerHTML = threads.length ? threads.map((t) => `<div class="item ${S.dismissed[`thr:${t.id}`] ? 'dismissed' : ''}">
+  $('#unrepliedMeta').textContent = `${active}件・コメントのある${withComments}記事のうち${checkedN}記事を確認済み${S.commentCheckIncomplete ? '（残りは次にnoteを開いたときに確認）' : ''}`;
+  const ne = $('#noticeEveryText');
+  if (ne) { const m = Number(S.settings.noticeEveryMin) || 5; ne.textContent = m >= 60 ? '1時間' : `${m}分`; }
+  const lc = $('#commentLookAt');
+  if (lc) lc.textContent = lastCheck ? `最後にコメントを確かめた時刻：${fmtDateTime(new Date(lastCheck).toISOString())}` : 'まだコメントを確かめていません';
+  $('#threadList').innerHTML = threads.length ? threads.map((t) => `<div class="item ${S.dismissed[dk(t)] ? 'dismissed' : ''}">
       <div class="body"><div class="who">${esc(t.by)}・${fmtDateTime(t.at)}</div>
-      <p class="text"><a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a> で、あなたの返信にさらに返信が来ています</p></div>
-      <button class="btn small" data-dismiss="thr:${esc(t.id)}">${S.dismissed[`thr:${t.id}`] ? '未対応に戻す' : '確認済み'}</button></div>`).join('')
+      <p class="text"><a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a> で、あなたの返信にさらに返信が来ています${t.rootKey ? '' : '<span class="tag">次の確認で判定し直します</span>'}</p></div>
+      <button class="btn small" data-dismiss="${esc(dk(t))}">${S.dismissed[dk(t)] ? '未対応に戻す' : '確認済み'}</button></div>`).join('')
+    : '<p class="meta">ありません。</p>';
+  const mm = $('#mineRepliesMeta');
+  if (mm) mm.textContent = `${activeMine}件${S.settings.badgeMineReplies === false ? '（アイコンの数字には入れていません）' : ''}`;
+  const openUrl = (t) => (t.lastKey && t.url ? `${String(t.url).replace(/[?#].*$/, '')}?c=${encodeURIComponent(t.lastKey)}` : t.url);
+  const ml = $('#mineRepliesList');
+  if (ml) ml.innerHTML = mineReplies.length ? mineReplies.map((t) => `<div class="item ${S.dismissed[dk(t)] ? 'dismissed' : ''}">
+      <div class="body"><div class="who">${esc(t.lastByName || t.by || '')}・${fmtDateTime(t.lastAt || t.at)}</div>
+      <p class="text"><a href="${esc(openUrl(t))}" target="_blank" rel="noopener">${esc(t.title || 'noteで開く')}</a> で、あなたのコメントに返信が来ています</p></div>
+      <button class="btn small" data-dismiss="${esc(dk(t))}">${S.dismissed[dk(t)] ? '未確認に戻す' : '確認済み'}</button></div>`).join('')
     : '<p class="meta">ありません。</p>';
   $('#unrepliedList').innerHTML = groups.length ? groups.map((g) => `<div class="group">
       <div class="group-title"><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.title)}</a></div>
@@ -249,11 +418,14 @@ function renderComments() {
 }
 const maxDate = (items) => items.reduce((a, c) => ((c.createdAt || '') > a ? c.createdAt : a), '');
 
+/** 0.6.1 までに記録した動作ログの言葉を、今の言葉にして表示する（v0.6.2 H。記録そのものは変えない） */
+const termFix = (m) => String(m || '').replace(/全期間スナップショットを保存しました/g, '毎日の記録をしました').replace(/スナップショット/g, '毎日の記録').replace(/本文を ?(\d+) ?件保存しました/g, '本文を$1件記録しました');
+
 /* ---------------- データ・設定 ---------------- */
 function renderData() {
   $$('[data-setting]').forEach((cb) => { cb.checked = !!S.settings[cb.dataset.setting]; });
   $('#logList').innerHTML = S.logs.slice().reverse().slice(0, 100)
-    .map((l) => `<li class="${l.level === 'error' ? 'error' : ''}">${fmtDateTime(new Date(l.at).toISOString())}　${esc(l.message)}</li>`).join('') || '<li>ログはまだありません。</li>';
+    .map((l) => `<li class="${l.level === 'error' ? 'error' : ''}">${fmtDateTime(new Date(l.at).toISOString())}　${esc(termFix(l.message))}</li>`).join('') || '<li>ログはまだありません。</li>';
   if (navigator.storage && navigator.storage.estimate) {
     navigator.storage.estimate().then((e) => { $('#storageInfo').textContent = `（現在の使用量: 約${(e.usage / 1024 / 1024).toFixed(1)}MB）`; });
   }
@@ -268,6 +440,32 @@ function downloadBlob(name, blob) {
 }
 function download(name, text, type) { downloadBlob(name, new Blob([text], { type })); }
 
+/**
+ * 画面の中の確認（v0.6.2 C・I：ブラウザ標準の確認の窓の代わり。着せ替えに合った見た目・スマホでも分かりやすく）
+ * buttons：[{ label, value, kind:'primary'|'danger'|'' }]。Esc・外を押すと cancel の値（無ければ null）
+ */
+function ponAsk({ title = '確認', text = '', buttons = [{ label: 'OK', value: true, kind: 'primary' }, { label: 'やめる', value: false }], cancel = false }) {
+  return new Promise((resolve) => {
+    const prev = document.activeElement;
+    const ov = document.createElement('div');
+    ov.className = 'pop-ov ask-ov';
+    ov.innerHTML = `<div class="pop ask" role="alertdialog" aria-modal="true" aria-labelledby="askTitle" aria-describedby="askText">
+      <h3 id="askTitle">${esc(title)}</h3><div id="askText" class="ask-text">${esc(text).replace(/\n/g, '<br>')}</div>
+      <p class="btn-row ask-btns">${buttons.map((b, i) => `<button type="button" class="btn ${b.kind || ''}" data-ask="${i}">${esc(b.label)}</button>`).join('')}</p></div>`;
+    document.body.appendChild(ov);
+    document.body.classList.add('pop-open');
+    const done = (v) => { ov.remove(); if (!document.querySelector('.pop-ov:not([hidden])')) document.body.classList.remove('pop-open'); document.removeEventListener('keydown', key, true); if (prev && prev.focus) prev.focus(); resolve(v); };
+    const key = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(cancel); }
+      else if (e.key === 'Tab') { const bs = [...ov.querySelectorAll('button')]; const i = bs.indexOf(document.activeElement); if (e.shiftKey && i <= 0) { e.preventDefault(); bs[bs.length - 1].focus(); } else if (!e.shiftKey && i === bs.length - 1) { e.preventDefault(); bs[0].focus(); } }
+    };
+    document.addEventListener('keydown', key, true);
+    ov.addEventListener('click', (e) => { const b = e.target.closest('[data-ask]'); if (b) done(buttons[+b.dataset.ask].value); else if (e.target === ov) done(cancel); });
+    const first = ov.querySelector('.btn.primary') || ov.querySelector('button');
+    if (first) first.focus();
+  });
+}
+
 function ponToast(text) {
   let el = document.getElementById('ponDlToast');
   if (!el) { el = document.createElement('div'); el.id = 'ponDlToast'; el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
@@ -279,11 +477,23 @@ const toCsv = (rows) => '﻿' + rows.map((r) => r.map(csvCell).join(',')).join('
 const HEAD = ['記録日', 'noteの集計時刻', '記事キー', 'タイトル', 'URL', '公開日時', 'インプレッション', 'PV', 'スキ', 'コメント', '売上'];
 const snapRows = (s) => s.items.map((i) => [s.date, s.statUpdatedAt || '', i.key, i.title, i.url, i.publishedAt, i.imp, i.pv, i.like, i.comment, i.sales]);
 
-/** バックアップの識別名。v0.5.0 までの「note-data-notebook」のバックアップも復元できる */
+/** バックアップの識別名。v0.5.0 までの「note-data-notebook」のバックアップも復元できる（中身は backup.js） */
 const BACKUP_APP = 'pirates-of-note';
 const BACKUP_APPS = ['pirates-of-note', 'note-data-notebook'];
+/** 全期間のCSV：記録を小分けに読んで、少しずつつなぐ（v0.6.2 A） */
+async function csvAllBlob() {
+  const parts = ['\ufeff' + [HEAD].map((r) => r.map(csvCell).join(',')).join('\r\n')];
+  await PonData.scanAll((views) => { for (const s of views) { const rows = snapRows(s); if (rows.length) parts.push('\r\n' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n')); } });
+  return new Blob(parts, { type: 'text/csv' });
+}
 
 const ACTIONS = {
+  'chart-all': async (btn) => { if (btn) { btn.disabled = true; btn.textContent = '読み込んでいます…'; } await PonData.ensureAll(); renderChart(); },
+  'goto-restore': () => {
+    const t = $('.tabs button[data-tab="data"]'); if (t) t.click();
+    const f = $('#importFile'); const box = f && f.closest('.card');
+    if (box) { requestAnimationFrame(() => box.scrollIntoView({ block: 'start' })); box.classList.add('flash'); setTimeout(() => box.classList.remove('flash'), 2500); }
+  },
   'run-now': async (btn) => {
     btn.disabled = true;
     $('#runStatus').textContent = '記録を始めています…';
@@ -291,16 +501,17 @@ const ACTIONS = {
     $('#runStatus').textContent = r && r.ok ? (r.via === 'new-tab' ? 'noteを裏で開いて記録しています。完了まで数十秒かかります。' : 'noteのタブで記録しています。') : `失敗しました: ${r && r.error}`;
     setTimeout(() => { btn.disabled = false; load(); }, 15000);
   },
-  'csv-latest': () => { const s = latest(); if (!s) return alert('データがありません。'); download(`pon-stats-${s.date}.csv`, toCsv([HEAD, ...snapRows(s)]), 'text/csv'); },
-  'csv-all': () => { if (!S.snapshots.length) return alert('データがありません。'); download(`pon-stats-all-${latest().date}.csv`, toCsv([HEAD, ...S.snapshots.flatMap(snapRows)]), 'text/csv'); },
+  'csv-latest': () => { const s = latest(); if (!s) return ponToast('データがありません。'); download(`pon-stats-${s.date}.csv`, toCsv([HEAD, ...snapRows(s)]), 'text/csv'); },
+  'csv-all': async () => { if (!S.snapshots.length) return ponToast('データがありません。'); downloadBlob(`pon-stats-all-${latest().date}.csv`, await csvAllBlob()); },
   'json-backup': async () => {
-    const dump = { app: BACKUP_APP, version: 1, appVersion: ponVersion(), exportedAt: new Date().toISOString(), stores: {} };
-    for (const st of ['snapshots', 'unreplied', 'myComments', 'bodies']) dump.stores[st] = await NDB.getAll(st);
-    dump.kv = { me: S.me, settings: S.settings, dismissed: S.dismissed, threadReplies: await NDB.kvGet('threadReplies', {}), profile: await NDB.kvGet('profile', null), perk: await NDB.kvGet('perk', null), plans: await NDB.kvGet('plans', []), missions: await NDB.kvGet('missions', []), recordAccount: await PonStore.recordAccount() };
-    download(`pon-backup-${jstDate()}.json`, JSON.stringify(dump), 'application/json');
+    // v0.6.2：小分けにつないだ Blob で作る（記録が大きくても作れる）。中身は新しい形（backup.js）
+    const { blob } = await PonBackup.blob({ appVersion: ponVersion(), ...(self.PON_ENV === 'web' ? { source: 'pon-web' } : {}) });
+    downloadBlob(`pon-backup-${jstDate()}.json`, blob);
   },
   wipe: async () => {
-    if (!confirm('Ponに記録したデータをすべて削除します。元に戻せません。\n（ダウンロードしたファイルは消えません）\n先にバックアップをダウンロードしましたか？')) return;
+    const ok = await ponAsk({ title: '記録をすべて削除', text: 'Ponに記録したデータをすべて削除します。元に戻せません。\n（ダウンロードしたファイルは消えません）\n先にバックアップをダウンロードしておくと安心です。', buttons: [{ label: '⬇ バックアップしてから削除', value: 'backup', kind: 'primary' }, { label: '削除する', value: 'go', kind: 'danger' }, { label: 'やめる', value: null }], cancel: null });
+    if (!ok) return;
+    if (ok === 'backup') await ACTIONS['json-backup']();
     for (const st of NDB.STORES) await NDB.clear(st);
     await NDB.kvSet('legacyMigrated', Date.now()); // 古い保存場所から戻ってこないように
     await chrome.runtime.sendMessage({ type: 'REFRESH_BADGE' });
@@ -309,47 +520,44 @@ const ACTIONS = {
 };
 
 async function importBackup(file) {
+  let dump;
+  try { dump = PonBackup.check(JSON.parse(await file.text())); } catch (e) { ponToast(`このファイルは復元できません：${e.message}`); return; }
+  if (typeof PonAccount !== 'undefined' && !(await PonAccount.confirmBackupAccount(dump))) return;
+  // v0.6.2 C：復元の前に、今の記録のバックアップを勧める
+  const has = PonData.count() > 0;
+  const choice = await ponAsk({
+    title: 'バックアップから復元',
+    text: `バックアップ（${fmtDateTime(dump.exportedAt)} 作成）を読み込みます。同じ日付の記録は上書きされ、それ以外は残ります。${has ? '\n念のため、今の記録を ⬇ バックアップしてから復元しますか？' : ''}`,
+    buttons: has
+      ? [{ label: '⬇ バックアップして復元', value: 'backup', kind: 'primary' }, { label: 'そのまま復元', value: 'go' }, { label: 'やめる', value: null }]
+      : [{ label: '復元する', value: 'go', kind: 'primary' }, { label: 'やめる', value: null }],
+    cancel: null,
+  });
+  if (!choice) return;
+  if (choice === 'backup') await ACTIONS['json-backup']();
+  let p;
   try {
-    const dump = JSON.parse(await file.text());
-    if (!BACKUP_APPS.includes(dump.app) || !dump.stores) throw new Error('このツールのバックアップファイルではありません。');
-    if (typeof PonAccount !== 'undefined' && !(await PonAccount.confirmBackupAccount(dump))) return;
-    if (!confirm(`バックアップ（${fmtDateTime(dump.exportedAt)} 作成）を読み込みます。同じ日付のデータは上書きされ、それ以外は残ります。よろしいですか？`)) return;
-    for (const st of ['snapshots', 'unreplied', 'myComments', 'bodies']) if (Array.isArray(dump.stores[st])) await NDB.putMany(st, dump.stores[st]);
-    if (dump.kv) {
-      if (dump.kv.dismissed) await NDB.kvSet('dismissed', { ...(await NDB.kvGet('dismissed', {})), ...dump.kv.dismissed });
-      if (dump.kv.settings) await NDB.kvSet('settings', dump.kv.settings);
-      if (dump.kv.me && !S.me) await NDB.kvSet('me', dump.kv.me);
-      if (dump.kv.threadReplies) await NDB.kvSet('threadReplies', { ...dump.kv.threadReplies, ...(await NDB.kvGet('threadReplies', {})) });
-      if (dump.kv.profile) await NDB.kvSet('profile', dump.kv.profile);
-      if (dump.kv.perk && !(await NDB.kvGet('perk', null))) await NDB.kvSet('perk', dump.kv.perk);
-      // v0.6.0：カレンダーの予定（同じ id は上書き、それ以外は残す）
-      // v0.6.0：カレンダーの予定・セルフミッション（同じ id は上書き、それ以外は残す）
-      for (const key of ['plans', 'missions']) {
-        if (!Array.isArray(dump.kv[key])) continue;
-        const cur = await NDB.kvGet(key, []);
-        const byId = new Map(cur.map((p) => [p.id, p]));
-        for (const p of dump.kv[key]) if (p && p.id) byId.set(p.id, p);
-        await NDB.kvSet(key, [...byId.values()]);
-      }
-    }
-    if (typeof PonAccount !== 'undefined') await PonAccount.afterRestore(dump);
-    await chrome.runtime.sendMessage({ type: 'REFRESH_BADGE' });
-    alert('復元しました。');
-    await load();
-    if (window.PonPerks) window.PonPerks.reload();
+    p = await PonBackup.plan(dump);
+    await PonBackup.apply(p);
   } catch (e) {
-    alert(`復元に失敗しました: ${e.message}`);
+    // 書き込みは1つの取引なので、途中で失敗したときは何も入っていない
+    await ponAsk({ title: '復元が途中で止まりました', text: `0件まで入りました（記録は復元の前のままです）。\n理由：${e.message || e}`, buttons: [{ label: '閉じる', value: true, kind: 'primary' }] });
+    return;
   }
+  if (typeof PonAccount !== 'undefined') await PonAccount.afterRestore(dump);
+  await chrome.runtime.sendMessage({ type: 'REFRESH_BADGE' });
+  await load();
+  if (window.PonPerks) window.PonPerks.reload();
+  ponToast(`復元しました（毎日の記録 ${fmt(p.counts.snapshots)}日分${p.counts.bodies ? `・本文 ${fmt(p.counts.bodies)}件` : ''}）。`);
 }
 
 /* ---------------- イベント ---------------- */
 function bind() {
-  $$('.tabs button').forEach((b) => b.addEventListener('click', () => {
-    $$('.tabs button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
-    $$('.tab').forEach((t) => { t.hidden = t.id !== `tab-${b.dataset.tab}`; });
-    if (b.dataset.tab === 'overview') renderChart();
-    history.replaceState(null, '', `#${b.dataset.tab}`);
-  }));
+  $$('.tabs button').forEach((b) => b.addEventListener('click', () => openTab(b.dataset.tab)));
+  $$('[data-asub]').forEach((b) => b.addEventListener('click', () => openTab(b.dataset.asub)));
+  $$('[data-tabs-scroll]').forEach((b) => b.addEventListener('click', () => { const nav = $('#tabsNav'); nav.scrollBy({ left: Number(b.dataset.tabsScroll) * nav.clientWidth * 0.6, behavior: 'smooth' }); }));
+  $('#tabsNav').addEventListener('scroll', tabsEdge, { passive: true });
+  addEventListener('resize', tabsEdge);
   $('#metricSel').addEventListener('change', (e) => { S.metric = e.target.value; renderChart(); });
   $$('[data-mode]').forEach((b) => b.addEventListener('click', () => {
     S.mode = b.dataset.mode;
@@ -373,7 +581,7 @@ function bind() {
   });
   $$('[data-setting]').forEach((cb) => cb.addEventListener('change', async () => {
     S.settings[cb.dataset.setting] = cb.checked;
-    await NDB.kvSet('settings', S.settings);
+    await saveSettings(cb.dataset.setting);
   }));
   document.addEventListener('click', (e) => {
     const b = e.target.closest('[data-action]');
@@ -383,8 +591,7 @@ function bind() {
   let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(renderChart, 150); });
 
   const initial = location.hash.slice(1);
-  const tabBtn = $(`.tabs button[data-tab="${initial}"]`);
-  if (tabBtn) tabBtn.click();
+  if (/^[a-z]+$/.test(initial) && $(`#tab-${TAB_ALIAS[initial] || initial}`)) openTab(initial); else tabsEdge();
 }
 
 /** 画面の一番下にバージョンを表示（拡張機能版は manifest.json、Web版はビルド時に埋め込んだ値） */
@@ -400,4 +607,5 @@ function showVersion() {
 
 bind();
 showVersion();
+watchHeadHeight();
 load();
