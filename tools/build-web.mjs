@@ -19,7 +19,7 @@ mkdirSync(join(OUT, 'app'), { recursive: true });
 mkdirSync(join(OUT, 'icons'), { recursive: true });
 
 // 1. 画面の共通ファイル
-for (const f of ['db.js', 'data.js', 'store.js', 'threads.js', 'backup.js', 'dashboard.js', 'periods.js', 'views.js', 'cardtrend.js', 'share.js', 'search.js', 'calendar.js', 'missions.js', 'features.js', 'account.js', 'beta.js', 'colors.js', 'settings.js', 'guide.js', 'bodies.js', 'perks.js', 'theme-boot.js', 'dashboard.css']) copyFileSync(join(SRC, f), join(OUT, 'app', f));
+for (const f of ['db.js', 'data.js', 'store.js', 'threads.js', 'backup.js', 'dashboard.js', 'periods.js', 'views.js', 'cardtrend.js', 'share.js', 'search.js', 'calendar.js', 'missions.js', 'features.js', 'account.js', 'beta.js', 'colors.js', 'settings.js', 'guide.js', 'bodies.js', 'perks.js', 'move.js', 'theme-boot.js', 'dashboard.css']) copyFileSync(join(SRC, f), join(OUT, 'app', f));
 for (const f of ['web.js', 'webapp.js']) copyFileSync(join(WEB, f), join(OUT, 'app', f));
 // env.js は本体の指紋が決まってから書く（下の 3.）
 
@@ -55,6 +55,7 @@ must('<script src="settings.js"></script>', '<script src="app/settings.js"></scr
 must('<script src="guide.js"></script>', '<script src="app/guide.js"></script>');
 must('<script src="bodies.js"></script>', '<script src="app/bodies.js"></script>');
 must('<script src="perks.js"></script>', '<script src="app/perks.js"></script>\n<script src="app/webapp.js"></script>');
+must('<script src="move.js"></script>', '<script src="app/move.js"></script>');
 must('<script src="theme-boot.js"></script>', '<script src="app/theme-boot.js"></script>');
 must('<h1>Pirates of note <span class="meta">Pon</span></h1>', '<h1>Pirates of note <span class="meta">Pon Web</span></h1>');
 writeFileSync(join(OUT, 'index.html'), html);

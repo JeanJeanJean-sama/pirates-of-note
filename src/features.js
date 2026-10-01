@@ -17,9 +17,8 @@ const PonFeatures = (() => {
   };
   /** sel：隠すところ。tab：タブごと隠す。own：その機能の設定を使う */
   const LIST = [
-    { group: '概要', key: 'period', label: '期間の動き（期間の比較・日ごとの動き）', sel: ['#periodCard'] },
+    { group: '概要', key: 'period', label: '期間の動き（期間の比較・日ごとの動き・累計のグラフ）', sel: ['#periodCard'] },
     { group: '概要', key: 'rates', label: '率（開封率・スキ率・コメント率）', own: true },
-    { group: '概要', key: 'chart', label: '推移のグラフ（全体の増えた数・累計）', sel: ['#chartCard'] },
     { group: '概要', key: 'growth', label: '伸びた記事', sel: ['#growthCard'] },
     { group: '概要', key: 'compare', label: '期間ごとの比較', sel: ['#compareCard'] },
     { group: '概要', key: 'share', label: '「共有用に出す」ボタン', sel: ['[data-action="share-open"]'] },

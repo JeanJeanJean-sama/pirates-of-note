@@ -6,6 +6,8 @@
  *  ・復元は、古い形（v0.5.x〜0.6.1、旧名 note-data-notebook）も新しい形も受け付ける
  *  ・kv の項目は KV の一覧1か所にまとめ、バックアップと復元の両方がこれを使う（入れ忘れを防ぐ）
  *  ・復元は、書き込みを1つの取引（トランザクション）にまとめる。失敗したら何も書き込まれない
+ *  ・v0.6.3：正規版（Pirates' Editor for note）への引っ越し用ファイル（moveBlob）。中身はバックアップと同じで、
+ *    app・moveFrom・項目名（pon → pen）だけが違う。0.6.3 の復元では読まない（「正規版のファイルです」）
  * ============================================================ */
 'use strict';
 
@@ -14,6 +16,25 @@ const PonBackup = (() => {
   const APPS = ['pirates-of-note', 'note-data-notebook'];
   const FORMAT = 2;
   const STORES = ['unreplied', 'myComments', 'bodies']; // 毎日の記録・記事の情報のほかに入れる置き場所
+
+  /* ---------- v0.6.3：正規版への引っ越し用ファイル ---------- */
+  /** 正規版の名前（0.7.0 はこの app のファイルだけを読む） */
+  const MOVE_APP = 'pirates-editor-for-note';
+  /**
+   * 名前の置き換え（旧 → 正規版）。kv・stores の項目名、ブラウザ内の小さな記録の名前、先頭の source の値に使う。
+   * 一覧に無い名前で「pon」が入っているものも pen に置き換える（入れ忘れを防ぐ）
+   */
+  const MOVE_NAMES = { 'pon.theme': 'pen.theme', 'pon-web': 'pen-web' };
+  const moveName = (k) => MOVE_NAMES[k] || String(k).replace(/pon/g, 'pen').replace(/Pon/g, 'Pen').replace(/PON/g, 'PEN');
+  /** 引っ越し用ファイルに入れる、ブラウザ内の小さな記録（localStorage）。旧名で読み、正規版の名前で書く */
+  const LOCAL_KEYS = ['pon.theme'];
+  function readLocal() {
+    const out = {};
+    for (const k of LOCAL_KEYS) {
+      try { const v = localStorage.getItem(k); if (v != null) out[moveName(k)] = v; } catch (_) { /* 使えない環境では入れない */ }
+    }
+    return out;
+  }
 
   /**
    * バックアップ・復元に入れる kv の一覧。how は復元のときの合わせ方
@@ -61,11 +82,19 @@ const PonBackup = (() => {
 
   /* ---------- バックアップ ---------- */
   /** バックアップの Blob を作る。meta はファイルの先頭に入れる項目（source など） */
-  async function blob(meta = {}) {
+  async function blob(meta = {}, opts = {}) {
     const C = PonData.calc;
     const parts = [];
-    const head = { app: APP, version: 1, backupFormat: FORMAT, appVersion: meta.appVersion || '', exportedAt: new Date().toISOString(), ...meta };
-    parts.push(JSON.stringify(head).slice(0, -1), ',"stores":{"snapshots":[');
+    const move = !!opts.move;
+    const nm = move ? moveName : (k) => k;
+    const exportedAt = new Date().toISOString();
+    let head = { app: APP, version: 1, backupFormat: FORMAT, appVersion: meta.appVersion || '', exportedAt, ...meta };
+    if (move) {
+      // 正規版が読む形：app を新しい名前にし、moveFrom を足す。source などの値の旧名も置き換える
+      head = { ...head, app: MOVE_APP, moveFrom: { app: APP, version: meta.appVersion || '', exportedAt } };
+      if (head.source) head.source = moveName(head.source);
+    }
+    parts.push(JSON.stringify(head).slice(0, -1), `,"stores":{"${nm('snapshots')}":[`);
     // 記事の情報：今の articles に、古い形の記録の中の記事の情報を足す（古い形の記録が残っていても復元できるように）
     const arts = new Map((await NDB.getAll('articles')).map((a) => [a.key, a]));
     const stored = new Set(arts.keys()); // 今の記事の情報（いちばん新しい）はそのまま使う
@@ -85,22 +114,36 @@ const PonBackup = (() => {
         parts.push((n++ ? ',' : '') + JSON.stringify(out));
       }
     }, 30);
-    parts.push('],"articles":', JSON.stringify([...arts.values()]));
+    parts.push(`],"${nm('articles')}":`, JSON.stringify([...arts.values()]));
     for (const st of STORES) {
-      parts.push(`,"${st}":[`);
+      parts.push(`,"${nm(st)}":[`);
       const all = await NDB.getAll(st);
       all.forEach((v, i) => parts.push((i ? ',' : '') + JSON.stringify(v)));
       parts.push(']');
     }
     const kv = {};
-    for (const k of KV) kv[k.key] = k.key === 'recordAccount' ? await PonStore.recordAccount() : await NDB.kvGet(k.key, k.empty);
-    parts.push('},"kv":', JSON.stringify(kv), '}');
+    for (const k of KV) kv[nm(k.key)] = k.key === 'recordAccount' ? await PonStore.recordAccount() : await NDB.kvGet(k.key, k.empty);
+    parts.push('},"kv":', JSON.stringify(kv));
+    if (move) parts.push(',"local":', JSON.stringify(readLocal()));
+    parts.push('}');
     return { blob: new Blob(parts, { type: 'application/json' }), snapshots: n, oldKept };
+  }
+
+  /** 正規版への引っ越し用ファイル（v0.6.3）。ファイル名は pen-move-YYYYMMDD.json */
+  async function moveBlob(meta = {}) {
+    const r = await blob(meta, { move: true });
+    const d = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10).replace(/-/g, '');
+    return { ...r, name: `pen-move-${d}.json` };
   }
 
   /* ---------- 復元 ---------- */
   /** 読み込んだバックアップを確かめる（このツールのものでなければ例外） */
   function check(dump) {
+    if (dump && dump.app === MOVE_APP) {
+      const e = new Error('これは正規版（Pirates\' Editor for note）への引っ越し用ファイルです。β版のPonでは読み込めません。正規版を入れて、正規版の「復元」で読み込んでください。');
+      e.moveFile = true;
+      throw e;
+    }
     if (!dump || !APPS.includes(dump.app) || !dump.stores) throw new Error('このツールのバックアップファイルではありません。');
     return dump;
   }
@@ -160,6 +203,6 @@ const PonBackup = (() => {
     return p.counts;
   }
 
-  return { APP, APPS, FORMAT, KV, mergeKv, blob, check, plan, apply };
+  return { APP, APPS, FORMAT, KV, mergeKv, blob, check, plan, apply, MOVE_APP, MOVE_NAMES, LOCAL_KEYS, moveName, moveBlob };
 })();
 if (typeof module !== 'undefined') module.exports = PonBackup;

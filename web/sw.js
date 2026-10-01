@@ -1,7 +1,7 @@
 /* sw.js — オフラインでも開けるようにする（画面のファイルだけを保存。記録データは扱わない） */
 const CACHE = 'pon-web-__VERSION__';
 const FILES = ['./', 'index.html', 'install.html', 'privacy.html', 'manifest.webmanifest',
-  'app/env.js', 'app/db.js', 'app/data.js', 'app/store.js', 'app/threads.js', 'app/backup.js', 'app/web.js', 'app/dashboard.js', 'app/periods.js', 'app/views.js', 'app/cardtrend.js', 'app/share.js', 'app/search.js', 'app/calendar.js', 'app/missions.js', 'app/features.js', 'app/account.js', 'app/beta.js', 'app/colors.js', 'app/settings.js', 'app/guide.js', 'app/bodies.js', 'app/perks.js', 'app/theme-boot.js', 'app/webapp.js', 'app/dashboard.css',
+  'app/env.js', 'app/db.js', 'app/data.js', 'app/store.js', 'app/threads.js', 'app/backup.js', 'app/web.js', 'app/dashboard.js', 'app/periods.js', 'app/views.js', 'app/cardtrend.js', 'app/share.js', 'app/search.js', 'app/calendar.js', 'app/missions.js', 'app/features.js', 'app/account.js', 'app/beta.js', 'app/colors.js', 'app/settings.js', 'app/guide.js', 'app/bodies.js', 'app/perks.js', 'app/move.js', 'app/theme-boot.js', 'app/webapp.js', 'app/dashboard.css',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-512-maskable.png', 'icons/apple-touch-icon.png', 'icons/pon-logo.svg'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });

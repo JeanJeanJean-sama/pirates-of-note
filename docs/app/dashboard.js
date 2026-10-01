@@ -77,7 +77,6 @@ function openTab(name) {
   $$('.tab').forEach((s) => { s.hidden = s.id !== `tab-${t}`; });
   $$('[data-asub]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.asub === t)));
   drawTab(t);
-  if (t === 'overview') renderChart();
   history.replaceState(null, '', `#${t}`);
   showActiveTab();
   // 各機能が「タブを開いた」ことを知るための知らせ
@@ -132,7 +131,7 @@ function renderAll() {
 }
 
 /* ---------------- v0.6.2 E：カードを折りたたむ（たたんだ状態は設定に記録） ---------------- */
-const FOLD_CARDS = ['ratesCard', 'periodCard', 'chartCard', 'growthCard', 'compareCard'];
+const FOLD_CARDS = ['ratesCard', 'periodCard', 'growthCard', 'compareCard'];
 /** S.settings の中の、変えた項目だけを記録する（v0.6.2 F：ほかの項目は記録されている今の値のまま） */
 const saveSettings = (...keys) => PonStore.patchSettings(Object.fromEntries(keys.map((k) => [k, S.settings[k]])));
 /** 設定を1項目だけ変えて記録する（ほかの項目は、記録されている今の値のまま） */
@@ -166,7 +165,7 @@ document.addEventListener('click', async (e) => {
   if (f[id]) delete f[id]; else f[id] = true;
   await setSetting('folded', f);
   applyFolds();
-  if (!f[id]) { if (id === 'chartCard') renderChart(); else if (typeof PonPeriods !== 'undefined') PonPeriods.render(); }
+  if (!f[id] && typeof PonPeriods !== 'undefined') PonPeriods.render();
 });
 /** 期間の選択の固定：上の見出しの高さのすぐ下に止める */
 function watchHeadHeight() {
@@ -195,7 +194,7 @@ function renderOverview() {
   $('#emptyState').hidden = !!cur;
   $('#kpis').innerHTML = '';
   $('#totalsHead').hidden = !cur;
-  if (!cur) { $('#chart').innerHTML = ''; $('#growthList').innerHTML = ''; $('#snapMeta').textContent = ''; if (typeof PonPeriods !== 'undefined') PonPeriods.render(); return; }
+  if (!cur) { $('#growthList').innerHTML = ''; $('#snapMeta').textContent = ''; if (typeof PonPeriods !== 'undefined') PonPeriods.render(); return; }
 
   const span = prev ? daysBetween(prev.date, cur.date) : 0;
   const tiles = [
@@ -221,21 +220,10 @@ function renderOverview() {
   const finN = S.snapshots.filter((x) => x.final).length;
   $('#snapMeta').textContent = `最終記録: ${fmtDateTime(cur.capturedAt)}${finN ? `　／　確定した日: 読み込んだ ${S.snapshots.length}日のうち ${finN}日` : ''}　／　noteの集計時刻: ${cur.statUpdatedAt ? fmtDateTime(cur.statUpdatedAt) : '–'}　／　記録日数: ${PonData.count()}日`;
 
-  renderChart();
   if (typeof PonPeriods !== 'undefined') PonPeriods.render(); else renderGrowth(cur, prev, span);
 }
 
-function seriesData() {
-  const val = (s) => (S.metric === 'follower' ? s.followerCount : s.totals[S.metric]);
-  const snaps = S.snapshots.filter((s) => val(s) != null);
-  if (S.mode === 'total') return snaps.map((s) => ({ date: s.date, value: val(s), span: 1 }));
-  const out = [];
-  for (let i = 1; i < snaps.length; i++) {
-    out.push({ date: snaps[i].date, value: val(snaps[i]) - val(snaps[i - 1]), span: daysBetween(snaps[i - 1].date, snaps[i].date) });
-  }
-  return out;
-}
-
+/* v0.6.3：「推移」のグラフ（全体の増えた数・累計）は、「期間の動き」の「日ごとの動き」にまとめた（累計の切り替え・フォロワー・全期間） */
 function niceTicks(min, max, count = 4) {
   if (min === max) { max = min + 1; }
   const raw = (max - min) / count;
@@ -245,60 +233,6 @@ function niceTicks(min, max, count = 4) {
   const ticks = [];
   for (let v = lo; v <= hi + step / 2; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
   return ticks;
-}
-
-function renderChart() {
-  const el = $('#chart');
-  const data = seriesData();
-  const label = METRIC_LABEL[S.metric];
-  $('#chartTitle').textContent = `${label}の${S.mode === 'diff' ? '増えた数' : '累計'}`;
-  const gaps = data.filter((d) => d.span > 1).length;
-  // v0.6.2 A：読み込んである期間だけ描く。全期間は「全期間を見る」で読み込む
-  const part = typeof PonData !== 'undefined' && !PonData.allLoaded() && S.snapshots.length
-    ? `<span class="chart-range">${esc(fmtDate(S.snapshots[0].date))}〜の${fmt(S.snapshots.length)}日分を表示しています（記録は全部で${fmt(PonData.count())}日分）。<button type="button" class="linkish" data-action="chart-all">全期間を見る</button></span>` : '';
-  $('#chartHint').innerHTML = (S.mode === 'diff'
-    ? esc(`前回の記録からの増加数です。${gaps ? `記録していない日があった区間（${gaps}か所）は、数日分がまとめて1点（白抜きの点）になっています。` : ''}無料版では、使い始めた日から1日ずつ記録がたまっていきます。`)
-    : '') + part;
-  if (data.length < (S.mode === 'diff' ? 1 : 2)) {
-    el.innerHTML = `<div class="nodata">${S.mode === 'diff' ? '2日分の記録がたまると、増えた数のグラフが表示されます。<br>明日以降、noteを開くと自動で記録されます。' : '2日分以上の記録がたまるとグラフが表示されます。'}</div>`;
-    return;
-  }
-
-  const W = Math.max(el.clientWidth, 320), H = 280, m = { t: 12, r: 16, b: 28, l: 56 };
-  const iw = W - m.l - m.r, ih = H - m.t - m.b;
-  const vals = data.map((d) => d.value);
-  const ticks = niceTicks(Math.min(0, ...vals), Math.max(...vals));
-  const y0 = ticks[0], y1 = ticks[ticks.length - 1];
-  const x = (i) => m.l + (data.length === 1 ? iw / 2 : (i / (data.length - 1)) * iw);
-  const y = (v) => m.t + ih - ((v - y0) / (y1 - y0)) * ih;
-  const every = Math.ceil(data.length / Math.max(2, Math.floor(iw / 70)));
-  const path = data.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(d.value).toFixed(1)}`).join('');
-  const showDots = data.length <= 60;
-
-  // v0.6.1 (7)：指標の色（色の設定で決めた色）。フォロワーは指標の色がないので着せ替えの色
-  const mc = { pv: 'var(--c-pv)', imp: 'var(--c-imp)', like: 'var(--c-like)', comment: 'var(--c-comment)' }[S.metric] || 'var(--series-1)';
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}の推移" style="--m-c: ${mc}">
-    <g class="axis">${ticks.map((t) => `<line class="gridline" x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}"/><text x="${m.l - 8}" y="${y(t) + 4}" text-anchor="end">${fmt(t)}</text>`).join('')}
-      ${data.map((d, i) => (i % every === 0 || i === data.length - 1 ? `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${d.date.slice(5).replace('-', '/')}</text>` : '')).join('')}</g>
-    ${y0 < 0 ? `<line class="baseline" x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}"/>` : ''}
-    <path class="series" d="${path}"/>
-    ${showDots ? data.map((d, i) => `<circle class="dot${d.span > 1 ? ' multi' : ''}" cx="${x(i)}" cy="${y(d.value)}" r="4"/>`).join('') : ''}
-    <line class="cross" id="cross" y1="${m.t}" y2="${m.t + ih}" visibility="hidden"/>
-    ${data.map((d, i) => { const half = data.length === 1 ? iw / 2 : iw / (data.length - 1) / 2; return `<rect class="hit" data-i="${i}" x="${x(i) - half}" y="${m.t}" width="${half * 2}" height="${ih}"/>`; }).join('')}
-  </svg>`;
-
-  const tip = $('#tooltip'), cross = $('#cross', el);
-  $$('.hit', el).forEach((r) => {
-    r.addEventListener('mousemove', (ev) => {
-      const d = data[+r.dataset.i];
-      cross.setAttribute('x1', x(+r.dataset.i)); cross.setAttribute('x2', x(+r.dataset.i)); cross.setAttribute('visibility', 'visible');
-      tip.innerHTML = `<div>${fmtDate(d.date)}${d.span > 1 ? `（${d.span}日分）` : ''}</div><div class="t-value">${S.mode === 'diff' ? signed(d.value) : fmt(d.value)}</div><div>${esc(label)}</div>`;
-      tip.hidden = false;
-      const tx = Math.min(ev.clientX + 14, innerWidth - tip.offsetWidth - 8);
-      tip.style.left = `${tx}px`; tip.style.top = `${ev.clientY - tip.offsetHeight - 10}px`;
-    });
-    r.addEventListener('mouseleave', () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); });
-  });
 }
 
 function renderGrowth(cur, prev, span) {
@@ -488,7 +422,6 @@ async function csvAllBlob() {
 }
 
 const ACTIONS = {
-  'chart-all': async (btn) => { if (btn) { btn.disabled = true; btn.textContent = '読み込んでいます…'; } await PonData.ensureAll(); renderChart(); },
   'goto-restore': () => {
     const t = $('.tabs button[data-tab="data"]'); if (t) t.click();
     const f = $('#importFile'); const box = f && f.closest('.card');
@@ -521,7 +454,11 @@ const ACTIONS = {
 
 async function importBackup(file) {
   let dump;
-  try { dump = PonBackup.check(JSON.parse(await file.text())); } catch (e) { ponToast(`このファイルは復元できません：${e.message}`); return; }
+  try { dump = PonBackup.check(JSON.parse(await file.text())); } catch (e) {
+    // v0.6.3：正規版への引っ越し用ファイルは、β版では読まずに案内だけ出す
+    if (e && e.moveFile) { await ponAsk({ title: '正規版のファイルです', text: e.message, buttons: [{ label: '閉じる', value: true, kind: 'primary' }], cancel: true }); return; }
+    ponToast(`このファイルは復元できません：${e.message}`); return;
+  }
   if (typeof PonAccount !== 'undefined' && !(await PonAccount.confirmBackupAccount(dump))) return;
   // v0.6.2 C：復元の前に、今の記録のバックアップを勧める
   const has = PonData.count() > 0;
@@ -558,12 +495,7 @@ function bind() {
   $$('[data-tabs-scroll]').forEach((b) => b.addEventListener('click', () => { const nav = $('#tabsNav'); nav.scrollBy({ left: Number(b.dataset.tabsScroll) * nav.clientWidth * 0.6, behavior: 'smooth' }); }));
   $('#tabsNav').addEventListener('scroll', tabsEdge, { passive: true });
   addEventListener('resize', tabsEdge);
-  $('#metricSel').addEventListener('change', (e) => { S.metric = e.target.value; renderChart(); });
-  $$('[data-mode]').forEach((b) => b.addEventListener('click', () => {
-    S.mode = b.dataset.mode;
-    $$('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-    renderChart();
-  }));
+
   $$('#articleTable th').forEach((th) => th.addEventListener('click', () => {
     const k = th.dataset.sort;
     S.sort = { key: k, dir: S.sort.key === k ? -S.sort.dir : (k === 'title' ? 1 : -1) };
@@ -588,7 +520,6 @@ function bind() {
     if (b && ACTIONS[b.dataset.action]) ACTIONS[b.dataset.action](b);
   });
   $('#importFile').addEventListener('change', (e) => { if (e.target.files[0]) importBackup(e.target.files[0]); e.target.value = ''; });
-  let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(renderChart, 150); });
 
   const initial = location.hash.slice(1);
   if (/^[a-z]+$/.test(initial) && $(`#tab-${TAB_ALIAS[initial] || initial}`)) openTab(initial); else tabsEdge();

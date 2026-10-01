@@ -434,7 +434,7 @@ html[data-theme="king"] .btn.primary, html[data-theme="king"] .totals-badge { co
 .flow-chart .hit { fill: transparent; cursor: crosshair; }
 @media (max-width: 640px) {
   .period-nav .pnav-range { order: 0; flex: 1 1 auto; font-size: 12px; }
-  .period-nav .wide { display: none; }
+  .period-nav .wide, #periodBody .seg .wide { display: none; }
   .period-bar { padding: 6px 8px; gap: 4px 6px; flex-wrap: wrap; }
   .period-bar .pk-seg { display: none; }
   .period-bar .pk-select { display: inline-block; width: auto; max-width: 8.5em; flex: 0 0 auto; }
@@ -685,3 +685,21 @@ html[data-theme="king"] { --cal-posted: #4d9be6; --cal-plan: #3cbf78; --cal-cont
 
 /* v0.6.2 K：最後にコメントを確かめた時刻 */
 .hint.look-at { margin-top: 14px; }
+
+/* v0.6.3：正規版への引っ越し */
+.banner.move { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.banner.move h2 { font-size: 15px; margin: 0; }
+.move-steps { margin: 6px 0; padding-left: 0; list-style: none; }
+.move-steps li { margin: 4px 0; padding-left: 1.4em; text-indent: -1.4em; }
+.move-steps li .btn { text-indent: 0; }
+.move-steps .btn { margin-top: 4px; white-space: normal; text-align: left; }
+.move-link { display: inline-block; font-size: 12px; margin-top: 2px; color: inherit; text-decoration: underline; }
+html[data-theme] .top .move-link { color: var(--head-sub); }
+
+/* v0.6.3：日ごとの動きにフォロワー（指標の色がないので着せ替えの色） */
+.flow-chart .c-follower { fill: var(--series-1); }
+.flow-chart .cur-line.c-follower, .flow-chart .gap-line.c-follower { stroke: var(--series-1); }
+.flow-chart .pt.c-follower.multi, .flow-chart .pt.c-follower.part { stroke: var(--series-1); }
+.flow-chart .zero.c-follower { stroke: var(--series-1); }
+.flow-chart .ptitle.c-follower-t { fill: var(--series-1); }
+.seg button:disabled { opacity: .45; cursor: not-allowed; }
