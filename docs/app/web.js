@@ -15,7 +15,7 @@ chrome.runtime = {
           window.open('https://note.com/', '_blank', 'noopener');
           return { ok: true, via: 'web' };
         case 'RUN_BODIES':
-          return { ok: false, error: '本文の保存はパソコン版Pon（Chrome拡張機能）で行えます。' };
+          return { ok: false, error: '本文の記録はパソコン版Pon（Chrome拡張機能）で行えます。' };
         default: return { ok: true };
       }
     } catch (e) {

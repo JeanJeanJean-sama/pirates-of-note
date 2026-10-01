@@ -14,7 +14,7 @@ const SELF_ID = ((document.currentScript && document.currentScript.src) || '').m
 const STATE_KEY = 'pon.web.v1';
 const INTERVAL_MS = 1000;
 const MAX_NOTICE_PAGES = 25;
-const NOTICE_SCAN_VERSION = 2;
+const NOTICE_SCAN_VERSION = 3;
 const GQL_URL = 'https://graphql.note.com/graphql';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -83,8 +83,9 @@ const LIST_QUERY = `query PonWebList($unit: DashboardPeriodUnit!, $date: Datetim
   dashboardStatLastUpdatedTimes { id noteStatLastUpdatedAt }
 }`;
 
-async function collectSnapshot(me) {
-  const today = jstToday();
+/** 記事一覧（数値つき）。day を過去の日にすると「その日の終わり時点の累計」（v0.6.2 M） */
+async function listFor(day) {
+  const today = day;
   const items = [];
   let after = null, statUpdatedAt = null;
   for (let page = 0; page < 50; page++) {
@@ -101,6 +102,12 @@ async function collectSnapshot(me) {
     if (!c.pageInfo || !c.pageInfo.hasNextPage) break;
     after = c.pageInfo.endCursor;
   }
+  return { items, statUpdatedAt };
+}
+
+async function collectSnapshot(me) {
+  const today = jstToday();
+  const { items, statUpdatedAt } = await listFor(today);
   const sum = (k) => items.reduce((a, i) => a + i[k], 0);
   return { date: today, capturedAt: new Date().toISOString(), statUpdatedAt, followerCount: me.followerCount ?? null,
     totals: { imp: sum('imp'), pv: sum('pv'), like: sum('like'), comment: sum('comment'), sales: sum('sales'), articles: items.length }, items };
@@ -139,22 +146,32 @@ async function scanNotices(me, st) {
   const rescan = st.noticeScanVersion !== NOTICE_SCAN_VERSION;
   const seen = rescan ? '' : (st.lastNoticeSeenAt || '');
   let newest = st.lastNoticeSeenAt || '';
-  const records = new Map(), threads = [];
+  const records = new Map(), threadNotes = new Map(), otherNotes = new Map();
   for (let page = 1; page <= MAX_NOTICE_PAGES; page++) {
     const j = await getJson(`/api/v3/notices?page=${page}`);
     let old = false;
     for (const n of j.data || []) {
       if (n.noticed_at && n.noticed_at > newest) newest = n.noticed_at;
       if (seen && n.noticed_at && n.noticed_at <= seen) { old = true; continue; }
-      if (n.kind !== 'note_comment_reply' && n.kind !== 'note_comment_like') continue;
+      // 種類は 2026/9/30 に本物の応答で確かめた（threads.js の説明を参照）
+      if (n.kind !== 'note_comment' && n.kind !== 'note_comment_reply' && n.kind !== 'note_comment_like') continue;
       const url = n.all_area_url || n.featured_area_url || '';
       const key = noteKeyOf(url), author = userOf(url);
       if (!key || !author) continue;
       const u = new URL(url, location.origin), c = u.searchParams.get('c'), base = u.origin + u.pathname;
       const by = (n.action_users || []).map((a) => a.name).filter(Boolean).join('、');
       if (author === me.urlname) {
-        if (n.kind === 'note_comment_reply') threads.push({ id: `${key}|${n.noticed_at}|${by}`, noteKey: key, title: n.note_name || '', by, at: n.noticed_at, url: c ? `${base}?c=${encodeURIComponent(c)}` : base });
+        // 自分の記事でやり取りに動きがあった：あとでそのやり取りの返信の一覧を読んで判定する（v0.6.2 J）
+        // v0.6.2 K：自分の記事へのコメント（note_comment）も、その記事を確かめるきっかけにする
+        if (n.kind !== 'note_comment_like') threadNotes.set(key, { key, title: n.note_name || '', url: base });
         continue;
+      }
+      if (n.kind === 'note_comment') continue;
+      // v0.6.2 L：他人の記事で自分のコメントに返信が来た（?c= は返信のキー）
+      if (n.kind === 'note_comment_reply') {
+        const o = otherNotes.get(key) || { key, title: n.note_name || '', url: base, find: [] };
+        if (c && !o.find.includes(c)) o.find.push(c);
+        otherNotes.set(key, o);
       }
       const rec = records.get(key) || { id: key, noteKey: key, noteTitle: n.note_name || '', noteUrl: base, author, source: 'notice', firstSeenAt: new Date().toISOString(), activity: [], lastActivityAt: null };
       rec.activity.push({ kind: n.kind === 'note_comment_reply' ? 'reply' : 'like', by, at: n.noticed_at, link: c ? `${base}?c=${encodeURIComponent(c)}` : base });
@@ -163,9 +180,9 @@ async function scanNotices(me, st) {
     }
     if (old || !j.next_page) break;
   }
-  st.lastNoticeSeenAt = newest;
+  st.lastNoticeSeenAt = newest || `${new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 19)}+09:00`; // 通知が無いときは今の時刻（日本時間）
   st.noticeScanVersion = NOTICE_SCAN_VERSION;
-  return { myComments: [...records.values()], threadReplies: threads };
+  return { myComments: [...records.values()], threadNotes, otherNotes };
 }
 
 /* ---------- Web版へ渡す ---------- */
@@ -213,20 +230,63 @@ async function main() {
 
     ui.set('記事の数値を取得中…');
     const snapshot = await collectSnapshot(me);
+    if (!snapshot.items.length) throw new Error('記事一覧が空で返ってきました。noteのページを読み込み直してから、もう一度「Ponで記録」を押してください（ログインの印が古くなっている可能性があります）。');
     if (ui.state.cancelled) return;
+
+    // v0.6.2 M：前の日の記録を「その日の終わり」の数字に直す（確定）。
+    // Web版の記録はこのページからは見えないので、このブックマークレットで記録した日（st.recDays）と、
+    // 初めてのときは前の14日を候補にする。記録のない日は Web版の側で作らない。1回に10日まで（受け渡しの大きさのため）
+    const finals = [];
+    const jstDateOf = (iso) => { const t = new Date(iso).getTime(); return Number.isNaN(t) ? '' : new Date(t + 9 * 3600e3).toISOString().slice(0, 10); };
+    const addDays = (d, n) => { const t = new Date(`${d}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+    st.recDays = [...new Set([...(st.recDays || []), snapshot.date])].sort().slice(-90);
+    st.finalSent = st.finalSent || [];
+    let cands = st.recDays.filter((d) => d < snapshot.date);
+    if (!st.finalInit) { for (let i = 1; i <= 14; i++) cands.push(addDays(snapshot.date, -i)); st.finalInit = true; }
+    // noteが「その日の終わり時点の累計」を正しく返すのは直近の約1か月だけ（2026/10/1 に本物で確かめた）。28日より前の日は確定しない
+    const minD = addDays(snapshot.date, -28);
+    cands = [...new Set(cands)].filter((d) => d >= minD && !st.finalSent.includes(d)).sort().reverse().slice(0, 10);
+    const known = new Set(snapshot.items.map((i) => i.key));
+    for (const d of cands) {
+      if (ui.state.cancelled) return;
+      if (!(jstDateOf(snapshot.statUpdatedAt) > d)) continue; // noteの集計がまだ次の日に進んでいない（次の記録のときに）
+      ui.set(`前の日の記録を確定中… ${d}`);
+      try {
+        const r = await listFor(d);
+        if (!r.items.length) continue;
+        if (r.items.some((i) => i.publishedAt && jstDateOf(i.publishedAt) > d)) { st.finalSent.push(d); continue; } // 別の日の値が返った（古すぎる日）
+        finals.push({ date: d, statUpdatedAt: r.statUpdatedAt, cols: ['key', 'imp', 'pv', 'like', 'comment', 'sales'], rows: r.items.map((i) => [i.key, i.imp, i.pv, i.like, i.comment, i.sales]),
+          arts: r.items.filter((i) => !known.has(i.key)).map((i) => ({ key: i.key, title: i.title, url: i.url, status: i.status, publishedAt: i.publishedAt })) });
+        st.finalSent.push(d);
+      } catch (_) { /* 次回また */ }
+    }
+    st.finalSent = st.finalSent.sort().slice(-200);
 
     // コメント：数が変わった記事と、前回未返信が残っていた記事だけ確認
     const pendingBefore = new Set(st.pendingKeys || []);
     const targets = snapshot.items.filter((i) => i.key && i.comment > 0 && (st.checked[i.key] !== i.comment || pendingBefore.has(i.key)));
     const unreplied = [];
+    // v0.6.2 J：やり取りの判定（前に判定したものは st.threads に。返信の数が同じなら読み直さない）
+    st.threads = st.threads || {};
+    const threads = [];
+    const judgeThreads = async (it, roots) => {
+      const prev = {};
+      for (const t of Object.values(st.threads)) if (t.noteKey === it.key) prev[t.rootKey] = t;
+      const items = await PonThreads.check({ getJson, note: it, roots, me: me.urlname, prev, own: true });
+      for (const k of Object.keys(st.threads)) if (st.threads[k].noteKey === it.key) delete st.threads[k];
+      for (const t of items) st.threads[t.rootKey] = t;
+      threads.push({ noteKey: it.key, items });
+    };
     ui.buttons([['コメント確認を後回し', () => { ui.state.skipComments = true; }], ['中止', () => { ui.state.cancelled = true; ui.close(); }]]);
     for (let i = 0; i < targets.length; i++) {
       if (ui.state.cancelled) return;
       if (ui.state.skipComments) break;
       ui.set(`コメントを確認中… ${i + 1} / ${targets.length}記事\n（初回は時間がかかります。2回目からは数秒です）`);
       try {
-        const rec = unrepliedRecord(targets[i], await rootComments(targets[i].key), me);
+        const roots = await rootComments(targets[i].key);
+        const rec = unrepliedRecord(targets[i], roots, me);
         unreplied.push(rec);
+        await judgeThreads(targets[i], roots);
         st.checked[rec.noteKey] = rec.checkedCommentCount;
       } catch (_) { /* 次回また確認 */ }
     }
@@ -238,6 +298,38 @@ async function main() {
     ui.set('通知を確認中…');
     const n = await scanNotices(me, st);
     if (ui.state.cancelled) return;
+    // 通知で動きがあった自分の記事のやり取りを判定する（コメント数の確認でまだ見ていない記事だけ）
+    const done = new Set(threads.map((t) => t.noteKey));
+    for (const it0 of n.threadNotes.values()) {
+      if (done.has(it0.key) || ui.state.cancelled) continue;
+      ui.set('返信のやり取りを確認中…');
+      try {
+        const it = snapshot.items.find((i) => i.key === it0.key) || it0;
+        const roots = await rootComments(it0.key);
+        unreplied.push(unrepliedRecord({ ...it, comment: it.comment ?? -1 }, roots, me));
+        await judgeThreads(it, roots);
+      } catch (_) { /* 次回また確認 */ }
+    }
+    // v0.6.2 L：他人の記事の「自分のコメントへの返信」。通知で動きがあった記事と、未確認が残っている記事（最後に自分が返信したら外すため）
+    const others = new Map(n.otherNotes);
+    for (const t of Object.values(st.threads)) if (t && t.own === false && t.needs && !others.has(t.noteKey) && others.size < 40) others.set(t.noteKey, { key: t.noteKey, title: t.title || '', url: String(t.url || '').replace(/[?#].*$/, ''), find: [], onlyPrev: true });
+    let otherN = 0;
+    for (const it of others.values()) {
+      if (ui.state.cancelled || otherN >= 30) break;
+      ui.set('自分のコメントへの返信を確認中…');
+      try {
+        const roots = await rootComments(it.key);
+        const prev = {};
+        for (const t of Object.values(st.threads)) if (t.noteKey === it.key) prev[t.rootKey] = t;
+        const items = await PonThreads.check({ getJson, note: it, roots: it.onlyPrev ? roots.filter((r) => prev[r.key]) : roots, me: me.urlname, prev, own: false, find: it.find });
+        for (const k of Object.keys(st.threads)) if (st.threads[k].noteKey === it.key) delete st.threads[k];
+        for (const t of items) st.threads[t.rootKey] = t;
+        threads.push({ noteKey: it.key, items });
+        otherN++;
+      } catch (_) { /* 次回また確認 */ }
+    }
+    // 古くなった判定の記録は300件まで
+    st.threads = Object.fromEntries(Object.entries(st.threads).sort((a, b) => String(b[1].at || '').localeCompare(String(a[1].at || ''))).slice(0, 300));
 
     // ジァン=サマーとの縁（称号・着せ替えの解放）。フォローしていない間は毎回確認（通信1回）
     let perk = st.perk || null;
@@ -248,7 +340,7 @@ async function main() {
     if (ui.state.cancelled) return;
 
     ui.set('Ponに渡しています…');
-    const payload = { app: 'pon-web', v: 1, cid: SELF_ID, me, snapshot, unreplied, myComments: n.myComments, threadReplies: n.threadReplies,
+    const payload = { app: 'pon-web', v: 1, cid: SELF_ID, me, snapshot, unreplied, myComments: n.myComments, threads, lookAt: Date.now(), finals,
       perk: perk ? { ...perk, scannedKeys: undefined } : null,
       logs: ui.state.skipComments ? [{ level: 'info', message: 'コメント確認の残りは次回に後回しにしました' }] : [] };
     const encoded = await encodePayload(payload);

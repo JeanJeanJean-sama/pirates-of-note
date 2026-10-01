@@ -19,7 +19,7 @@ mkdirSync(join(OUT, 'app'), { recursive: true });
 mkdirSync(join(OUT, 'icons'), { recursive: true });
 
 // 1. 画面の共通ファイル
-for (const f of ['db.js', 'store.js', 'dashboard.js', 'periods.js', 'views.js', 'cardtrend.js', 'share.js', 'search.js', 'calendar.js', 'missions.js', 'features.js', 'account.js', 'bodies.js', 'perks.js', 'theme-boot.js', 'dashboard.css']) copyFileSync(join(SRC, f), join(OUT, 'app', f));
+for (const f of ['db.js', 'data.js', 'store.js', 'threads.js', 'backup.js', 'dashboard.js', 'periods.js', 'views.js', 'cardtrend.js', 'share.js', 'search.js', 'calendar.js', 'missions.js', 'features.js', 'account.js', 'beta.js', 'colors.js', 'settings.js', 'guide.js', 'bodies.js', 'perks.js', 'move.js', 'theme-boot.js', 'dashboard.css']) copyFileSync(join(SRC, f), join(OUT, 'app', f));
 for (const f of ['web.js', 'webapp.js']) copyFileSync(join(WEB, f), join(OUT, 'app', f));
 // env.js は本体の指紋が決まってから書く（下の 3.）
 
@@ -35,7 +35,10 @@ must('<link rel="stylesheet" href="dashboard.css">', [
   '<link rel="stylesheet" href="app/dashboard.css">',
 ].join('\n'));
 must('<script src="db.js"></script>', '<script src="app/env.js"></script>\n<script src="app/db.js"></script>');
+must('<script src="data.js"></script>', '<script src="app/data.js"></script>');
 must('<script src="store.js"></script>', '<script src="app/store.js"></script>\n<script src="app/web.js"></script>');
+must('<script src="threads.js"></script>', '<script src="app/threads.js"></script>');
+must('<script src="backup.js"></script>', '<script src="app/backup.js"></script>');
 must('<script src="dashboard.js"></script>', '<script src="app/dashboard.js"></script>');
 must('<script src="periods.js"></script>', '<script src="app/periods.js"></script>');
 must('<script src="views.js"></script>', '<script src="app/views.js"></script>');
@@ -46,14 +49,19 @@ must('<script src="calendar.js"></script>', '<script src="app/calendar.js"></scr
 must('<script src="missions.js"></script>', '<script src="app/missions.js"></script>');
 must('<script src="features.js"></script>', '<script src="app/features.js"></script>');
 must('<script src="account.js"></script>', '<script src="app/account.js"></script>');
+must('<script src="beta.js"></script>', '<script src="app/beta.js"></script>');
+must('<script src="colors.js"></script>', '<script src="app/colors.js"></script>');
+must('<script src="settings.js"></script>', '<script src="app/settings.js"></script>');
+must('<script src="guide.js"></script>', '<script src="app/guide.js"></script>');
 must('<script src="bodies.js"></script>', '<script src="app/bodies.js"></script>');
 must('<script src="perks.js"></script>', '<script src="app/perks.js"></script>\n<script src="app/webapp.js"></script>');
+must('<script src="move.js"></script>', '<script src="app/move.js"></script>');
 must('<script src="theme-boot.js"></script>', '<script src="app/theme-boot.js"></script>');
 must('<h1>Pirates of note <span class="meta">Pon</span></h1>', '<h1>Pirates of note <span class="meta">Pon Web</span></h1>');
 writeFileSync(join(OUT, 'index.html'), html);
 
 // 3. ブックマークレット
-const collector = readFileSync(join(SRC, 'perk-collect.js'), 'utf8') + '\n' + readFileSync(join(WEB, 'collector.js'), 'utf8').replace('__PON_APP_URL__', APP_URL);
+const collector = readFileSync(join(SRC, 'perk-collect.js'), 'utf8') + '\n' + readFileSync(join(SRC, 'threads.js'), 'utf8').replace(/^if \(typeof module[^\n]*$/m, '') + '\n' + readFileSync(join(WEB, 'collector.js'), 'utf8').replace('__PON_APP_URL__', APP_URL);
 const { code } = await minify(`(async()=>{${collector}\nawait main();})();`, { compress: { passes: 2 }, mangle: true, format: { comments: false } });
 // 本体は docs/collector-<指紋>.js に置き、ブックマークレットは本体を読み込むだけの短いコードにする
 // （Androidのブックマークは長いURLが途中で切れて動かないため）。

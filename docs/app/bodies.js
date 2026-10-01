@@ -102,9 +102,9 @@ async function renderBodies() {
   if (el && !(typeof run !== 'undefined' && run.active) && !el.dataset.hold) {
     if (queue.length && !(prog && prog.finished && Date.now() - prog.at < 5000)) {
       el.textContent = prog && !prog.finished && Date.now() - prog.at < 60000
-        ? `保存中… ${prog.done} / ${prog.total}`
-        : `保存待ち ${queue.length} 件（noteを開くと保存が始まります）`;
-    } else if (prog && prog.finished) el.textContent = `最後の保存: ${fmtDateTime(new Date(prog.at).toISOString())}（${prog.done}件）`;
+        ? `記録中… ${prog.done} / ${prog.total}`
+        : `記録待ち ${queue.length} 件（noteを開くと記録が始まります）`;
+    } else if (prog && prog.finished) el.textContent = `最後の記録: ${fmtDateTime(new Date(prog.at).toISOString())}（${prog.done}件）`;
     else el.textContent = '';
   }
   // 保存中は3秒ごとに表示を更新
@@ -148,8 +148,8 @@ async function fetchBodyDirect(key, fallbackUrl) {
 const run = { active: false, cancel: false };
 
 async function fetchBodies(items, { downloadAfter = true, label = '' } = {}) {
-  if (run.active) { alert('本文を取得中です。終わるまでお待ちください。'); return; }
-  if (!items.length) { alert('保存する記事はありません。'); return; }
+  if (run.active) { ponToast('本文を取得中です。終わるまでお待ちください。'); return; }
+  if (!items.length) { ponToast('記録する記事はありません。'); return; }
   run.active = true; run.cancel = false;
   const el = $('#bodyProgress');
   const stopBtn = $('#bodyStop');
@@ -177,10 +177,10 @@ async function fetchBodies(items, { downloadAfter = true, label = '' } = {}) {
     if (stopBtn) stopBtn.hidden = true;
   }
   const sec = Math.round((Date.now() - t0) / 1000);
-  await chrome.runtime.sendMessage({ type: 'LOG', payload: { level: failed.length ? 'warn' : 'info', message: `本文を${done.length}件保存しました${failed.length ? `（失敗 ${failed.length}件）` : ''}` } }).catch(() => {});
+  await chrome.runtime.sendMessage({ type: 'LOG', payload: { level: failed.length ? 'warn' : 'info', message: `本文を${done.length}件記録しました${failed.length ? `（失敗 ${failed.length}件）` : ''}` } }).catch(() => {});
   if (partial.length) await chrome.runtime.sendMessage({ type: 'RUN_BODIES', payload: { keys: partial } }).catch(() => {});
   await renderBodies();
-  if (el) el.textContent = `${run.cancel ? '途中で止めました。' : '完了しました。'}保存 ${done.length}件${failed.length ? `・失敗 ${failed.length}件（もう一度押すと取り直します）` : ''}${partial.length ? `・有料記事 ${partial.length}件はnoteのタブで全文を取り直しています` : ''}（${sec}秒）${downloadAfter && done.length ? '　CSVをダウンロードしました。' : ''}`;
+  if (el) el.textContent = `${run.cancel ? '途中で止めました。' : '完了しました。'}記録 ${done.length}件${failed.length ? `・失敗 ${failed.length}件（もう一度押すと取り直します）` : ''}${partial.length ? `・有料記事 ${partial.length}件はnoteのタブで全文を取り直しています` : ''}（${sec}秒）${downloadAfter && done.length ? '　CSVをダウンロードしました。' : ''}`;
   if (downloadAfter && done.length) await exportBodiesCsv({ keys: done, label });
 }
 
@@ -188,7 +188,7 @@ async function fetchBodies(items, { downloadAfter = true, label = '' } = {}) {
 async function exportBodiesCsv(opts = {}) {
   const keys = opts && opts.keys ? new Set(opts.keys) : null;
   const rows = (await loadBodies()).filter((r) => !keys || keys.has(r.noteKey));
-  if (!rows.length) return alert('ダウンロードできる本文がありません。');
+  if (!rows.length) return ponToast('ダウンロードできる本文がありません。');
   rows.sort((a, b) => (a.publishedAt || '').localeCompare(b.publishedAt || '')); // 古い順（GAS版と同じ並び）
   const label = opts && opts.label ? `-${opts.label}` : '';
   download(`pon-bodies${label}-${jstDate()}.csv`, bodiesCsvText(rows), 'text/csv');
@@ -261,7 +261,7 @@ function uniqueNames(rows, ext) {
 
 async function exportBodiesMarkdown() {
   const rows = await loadBodies();
-  if (!rows.length) return alert('ダウンロードできる本文がありません。');
+  if (!rows.length) return ponToast('ダウンロードできる本文がありません。');
   const safe = (s) => String(s).replace(/[\\/:*?"<>|\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
   const yaml = (s) => JSON.stringify(String(s ?? ''));
   const used = new Set();
@@ -339,7 +339,7 @@ async function renderExport() {
 async function exportSelected() {
   const c = exportConf();
   const rows = (await loadBodies()).filter((r) => SEL.picked.has(r.noteKey)).sort((a, b) => (a.publishedAt || '').localeCompare(b.publishedAt || ''));
-  if (!rows.length) return alert('ダウンロードできる本文がありません。');
+  if (!rows.length) return ponToast('ダウンロードできる本文がありません。');
   const preset = SEL.preset || c.preset;
   const label = preset === 'all' ? 'all' : preset === 'this' ? jstMonth(0) : preset === 'last' ? jstMonth(-1)
     : preset === 'range' ? `${(SEL.from || 'start').replace(/-/g, '')}-${(SEL.to || 'end').replace(/-/g, '')}` : `${rows.length}articles`;
@@ -355,7 +355,7 @@ async function exportSelected() {
     download(`${base}.csv`, bodiesCsvText(rows), 'text/csv');
   }
 }
-async function setExport(patch) { S.settings.bodyExport = { ...exportConf(), ...patch }; await NDB.kvSet('settings', S.settings); renderExport(); }
+async function setExport(patch) { S.settings.bodyExport = { ...exportConf(), ...patch }; await saveSettings('bodyExport'); renderExport(); }
 
 document.addEventListener('click', (e) => {
   const b = e.target.closest && e.target.closest('[data-xpre],[data-xpack]');
@@ -393,7 +393,7 @@ async function downloadAllBodies(kind) {
   await loadBodies();
   const missing = cur.items.filter((i) => i.key && !B.keys.has(i.key) && !B.missing.has(i.key));
   if (missing.length) {
-    if (!confirm(`Ponにまだ本文を記録していない記事が${missing.length}本あります。noteから取り込んでから、全記事分をダウンロードします（${Math.max(1, Math.ceil(missing.length * 1.1 / 60))}分ほど）。\nその間はこの画面を開いたままにしてください。`)) return;
+    if (!(await ponAsk({ title: '本文を取り込んでからダウンロード', text: `Ponにまだ本文を記録していない記事が${missing.length}本あります。noteから取り込んでから、全記事分をダウンロードします（${Math.max(1, Math.ceil(missing.length * 1.1 / 60))}分ほど）。\nその間はこの画面を開いたままにしてください。`, buttons: [{ label: '取り込んでダウンロード', value: true, kind: 'primary' }, { label: 'やめる', value: false }] }))) return;
     await fetchBodies(missing, { downloadAfter: false });
     if (run.cancel) return;
   }
@@ -404,8 +404,8 @@ ACTIONS['bodies-md'] = () => downloadAllBodies('md');
 ACTIONS['bodies-missing'] = ACTIONS['bodies-csv'];
 ACTIONS['bodies-all'] = async () => {
   const cur = latest();
-  if (!cur) return alert('先に数値の記録を取得してください。');
-  if (!confirm(`全${cur.items.length}記事の本文をnoteから取り込み直して、CSVをダウンロードします（${Math.ceil(cur.items.length * 1.1 / 60)}分ほど）。よろしいですか？`)) return;
+  if (!cur) return ponToast('先に数値の記録を取得してください。');
+  if (!(await ponAsk({ title: '本文を取り込み直す', text: `全${cur.items.length}記事の本文をnoteから取り込み直して、CSVをダウンロードします（${Math.ceil(cur.items.length * 1.1 / 60)}分ほど）。`, buttons: [{ label: '取り込み直す', value: true, kind: 'primary' }, { label: 'やめる', value: false }] }))) return;
   await fetchBodies(cur.items.filter((i) => i.key), { downloadAfter: false });
   if (!run.cancel) exportBodiesCsv();
 };
@@ -417,7 +417,7 @@ document.addEventListener('click', async (e) => {
   if (!k) return;
   const btn = e.target;
   if (B.keys.has(k)) { exportBodiesCsv({ keys: [k], label: k }); return; }
-  if (self.PON_ENV === 'web') { alert('この記事の本文はまだPonに記録されていません（本文の取り込みはパソコン版で行えます）。'); return; }
+  if (self.PON_ENV === 'web') { ponToast('この記事の本文はまだPonに記録されていません（本文の取り込みはパソコン版で行えます）。'); return; }
   const cur = latest();
   const it = (cur && cur.items.find((i) => i.key === k)) || { key: k, url: '' };
   btn.disabled = true; btn.textContent = 'noteから取り込み中…';

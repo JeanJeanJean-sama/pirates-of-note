@@ -121,6 +121,11 @@ const PonMissions = (() => {
     if (!box) return;
     const today = todayJst();
     if (!M.list.length) { box.innerHTML = '<p class="meta">まだミッションはありません。「＋ ミッションを作る」から、自分だけの目標を決められます。</p>'; return; }
+    // v0.6.2 A：フォロワー・累計PV・累計スキは、始めた日からの記録が要る（読み込んでいなければ読んでから描く）
+    if (typeof PonData !== 'undefined') {
+      const need = M.list.filter((m) => !['streak', 'count'].includes(m.kind) && isDay(m.start)).map((m) => m.start).sort()[0];
+      if (need && !PonData.hasFrom(need)) { box.innerHTML = '<p class="meta loading" role="status">記録を読み込んでいます…</p>'; PonData.ensureFrom(need).then(renderList); return; }
+    }
     const order = { doing: 0, before: 1, done: 2, ended: 3 };
     const rows = M.list.map((m) => ({ m, p: progress(m, S.snapshots, today) })).sort((a, b) => order[a.p.state] - order[b.p.state] || (a.m.deadline || '9').localeCompare(b.m.deadline || '9'));
     box.innerHTML = rows.map(({ m, p }) => {
@@ -192,7 +197,7 @@ const PonMissions = (() => {
     await save(); closeEdit(); renderList();
   }
   async function deleteEdit() {
-    if (!confirm(`「${M.edit.name || titleOf(M.edit)}」を消します。よろしいですか？`)) return;
+    if (!(await ponAsk({ title: 'ミッションを消す', text: `「${M.edit.name || titleOf(M.edit)}」を消します。元に戻せません。`, buttons: [{ label: '消す', value: true, kind: 'danger' }, { label: 'やめる', value: false }] }))) return;
     M.list = M.list.filter((x) => x.id !== M.edit.id);
     await save(); closeEdit(); renderList();
   }

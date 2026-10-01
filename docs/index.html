@@ -19,42 +19,53 @@
     <div>
       <h1>Pirates of note <span class="meta">Pon Web</span></h1>
       <p class="sub" id="whoami">読み込み中…</p>
+      <a href="#" class="move-link" id="moveLink" data-move="open" hidden>正規版への引っ越し</a>
     </div>
   </div>
-  <nav class="tabs" role="tablist">
+  <div class="tabs-wrap" id="tabsWrap">
+  <nav class="tabs" role="tablist" id="tabsNav">
     <button role="tab" data-tab="overview" aria-selected="true">概要</button>
     <button role="tab" data-tab="articles">記事</button>
-    <button role="tab" data-tab="map">マップ</button>
     <button role="tab" data-tab="comments">コメント <span class="pill" id="unrepliedBadge" hidden></span></button>
-    <button role="tab" data-tab="calendar">カレンダー <span class="pill" id="deadlineBadge" hidden></span></button>
+    <button role="tab" data-tab="calendar">予定 <span class="pill" id="deadlineBadge" hidden></span></button>
     <button role="tab" data-tab="crew">称号・着せ替え</button>
-    <button role="tab" data-tab="data">データ・設定</button>
+    <button role="tab" data-tab="data">設定</button>
   </nav>
+  <button type="button" class="tabs-more left" data-tabs-scroll="-1" aria-label="タブを左へ" hidden>‹</button>
+  <button type="button" class="tabs-more right" data-tabs-scroll="1" aria-label="タブを右へ（続きがあります）" hidden>›</button>
+  </div>
 </header>
 
 <main>
+  <!-- v0.6.3：正規版（Pirates' Editor for note）に移りました（中身は move.js） -->
+  <div id="moveBanner" class="card banner move" role="region" aria-label="正規版への引っ越しの案内" hidden></div>
   <!-- 概要 -->
   <section id="tab-overview" class="tab">
     <div id="emptyState" class="card empty" hidden>
       <h2>まだデータがありません</h2>
       <p class="ext-only">noteにログインした状態で、note.com のページを開くと自動で記録が始まります（1日1回）。</p>
       <p class="ext-only"><button class="btn primary" data-action="run-now">今すぐ記録する</button></p>
+      <p class="ext-only hint beta-move">β版・Web版を使っていた人は、そちらで ⬇ バックアップしたファイルをここで復元すると、記録と特典を引き継げます。<button type="button" class="linkish" data-action="goto-restore">復元する場所を開く</button></p>
       <p class="web-only">noteにログインした状態で note.com を開き、ブックマークレット「Ponで記録」をタップすると、ここにデータが入ります。</p>
       <p class="web-only"><a class="btn primary" href="install.html">記録のしかた（ブックマークレットの登録）</a>　<label class="btn">パソコン版Ponのバックアップを読み込む<input type="file" accept="application/json" class="importFileAlt" hidden></label></p>
     </div>
     <div id="accountBanner" class="card banner account" hidden role="alert"></div>
+    <div id="betaBanner" class="card banner beta" hidden role="status"></div>
+    <div id="fmtBanner" class="card banner" hidden role="status"></div>
     <div id="backupBanner" class="card banner web-only" hidden></div>
     <div id="soonBanner" class="card banner soon" hidden></div>
-    <div class="kpis" id="kpis"></div>
-    <p class="meta" id="snapMeta"></p>
+    <div id="startGuide" class="card banner start-guide" hidden></div>
+    <div class="totals-box" id="totalsBox">
+      <div class="totals-head" id="totalsHead" hidden></div>
+      <div class="kpis" id="kpis"></div>
+      <p class="meta" id="snapMeta"></p>
+    </div>
 
-    <div class="card" id="periodCard" hidden>
-      <div class="card-head">
-        <h2>期間の動き <button type="button" class="btn small" data-action="share-open" title="noteの振り返り記事に使う文字や画像を作ります">共有用に出す</button></h2>
-        <div id="growthPicker"></div>
-      </div>
+    <!-- v0.6.2 E：期間の選択（率・期間の動き・伸びた記事・期間ごとの比較が同じ期間を使う）。スクロールしても上に見える -->
+    <div class="period-bar" id="periodBar" hidden>
+      <span class="pb-label">期間</span>
+      <div id="growthPicker"></div>
       <div class="period-nav" id="periodNav"></div>
-      <div id="periodBody"></div>
     </div>
 
     <div class="card" id="ratesCard" hidden>
@@ -66,32 +77,17 @@
             <button type="button" data-rmode="period" aria-pressed="true">選んだ期間</button>
           </div>
           <label class="check"><input type="checkbox" id="ratesShow" checked> 表示する</label>
+          <button type="button" class="linkish meta goto-setting" data-goto-setting="rates">設定で見る</button>
         </div>
       </div>
       <div id="ratesBody"></div>
     </div>
 
-    <div class="card" id="chartCard">
+    <div class="card" id="periodCard" hidden>
       <div class="card-head">
-        <h2 id="chartTitle">推移</h2>
-        <div class="controls">
-          <label>指標
-            <select id="metricSel">
-              <option value="pv">ページビュー</option>
-              <option value="imp">インプレッション</option>
-              <option value="like">スキ</option>
-              <option value="comment">コメント</option>
-              <option value="follower">フォロワー</option>
-            </select>
-          </label>
-          <div class="seg" role="group" aria-label="表示方法">
-            <button data-mode="diff" aria-pressed="true">増えた数</button>
-            <button data-mode="total" aria-pressed="false">累計</button>
-          </div>
-        </div>
+        <h2>期間の動き <button type="button" class="btn small" data-action="share-open" title="noteの振り返り記事に使う文字や画像を作ります">共有用に出す</button></h2>
       </div>
-      <div id="chart" class="chart"></div>
-      <p class="hint" id="chartHint"></p>
+      <div id="periodBody"></div>
     </div>
 
     <div class="card" id="growthCard">
@@ -121,6 +117,10 @@
 
   <!-- 記事 -->
   <section id="tab-articles" class="tab" hidden>
+    <div class="seg subtabs" role="group" aria-label="記事の見方">
+      <button type="button" data-asub="articles" aria-pressed="true">一覧</button>
+      <button type="button" data-asub="map" aria-pressed="false">マップ</button>
+    </div>
     <div class="card" id="searchCard">
       <div class="card-head"><h2>記事を探す <span class="meta">本文・タイトル・ハッシュタグ・投稿日</span></h2></div>
       <div id="searchForm"></div>
@@ -135,7 +135,7 @@
       </div>
       <div class="controls wrap">
         <div class="seg" role="group" aria-label="見る段階" id="stageSeg">
-          <button data-stage="entry" aria-pressed="true">入口（IMP→PV）</button>
+          <button data-stage="entry" aria-pressed="true">入口（インプレッション→PV）</button>
           <button data-stage="response" aria-pressed="false">反応（PV→スキ）</button>
         </div>
         <div class="seg" role="group" aria-label="並べ替え" id="orderSeg">
@@ -155,7 +155,7 @@
           <thead><tr>
             <th data-sort="title" class="l">タイトル</th>
             <th data-sort="publishedAt">公開日</th>
-            <th data-sort="imp">IMP</th>
+            <th data-sort="imp">インプレッション</th>
             <th data-sort="pv">PV</th>
             <th data-sort="dpv">PV 前回比</th>
             <th data-sort="like">スキ</th>
@@ -172,6 +172,10 @@
 
   <!-- マップ -->
   <section id="tab-map" class="tab" hidden>
+    <div class="seg subtabs" role="group" aria-label="記事の見方">
+      <button type="button" data-asub="articles" aria-pressed="false">一覧</button>
+      <button type="button" data-asub="map" aria-pressed="true">マップ</button>
+    </div>
     <div class="card">
       <div class="card-head">
         <h2>全体の中でどんな位置？</h2>
@@ -180,8 +184,18 @@
           <button data-map="b" aria-pressed="false">B: PV → スキ</button>
         </div>
       </div>
+      <div class="controls map-controls">
+        <span class="meta">補助線</span>
+        <div class="seg" role="group" aria-label="補助線" id="mapGuideSeg">
+          <button type="button" data-mguide="diag" aria-pressed="true">斜めの線（％の目安）</button>
+          <button type="button" data-mguide="quad" aria-pressed="false">4つの区画</button>
+        </div>
+        <button type="button" class="linkish meta goto-setting" data-goto-setting="mapGuide">設定で見る</button>
+        <label id="mapMinWrap" hidden><span id="mapMinLabel">インプレッションが</span> <input type="number" id="mapMin" min="0" step="10" value="100" inputmode="numeric"> 未満の記事は除く</label>
+      </div>
       <p class="hint" id="mapHint"></p>
       <div class="legend" id="mapLegend"></div>
+      <div class="legend quad-info" id="mapQuadInfo" hidden></div>
       <div id="mapChart" class="chart map"></div>
     </div>
   </section>
@@ -199,8 +213,16 @@
       <p class="hint">自分の記事についたコメントのうち、あなたがまだ返信していないものです（noteの「作者が返信済みか」の情報を使っています）。<span class="ext-only">返信すると、この画面を開いたときや、記事のページで30秒ほど待つと自動で消えます。</span><span class="web-only">返信したあと、noteでもう一度「Ponで記録」をタップすると消えます。</span>返信しないと決めたものは「対応済み」にできます。</p>
       <div id="unrepliedList"></div>
       <h3 class="subhead">返信への返信（要確認）</h3>
-      <p class="hint">あなたが返信したコメントに、相手からさらに返信が来たものです。noteの通知から拾っているため、直近2〜3週間分と、それ以降に届いたものが対象です。すでに返信していたら「確認済み」にしてください。</p>
+      <p class="hint">自分の記事のコメントのやり取りで、あなたが返信したあとに相手がまた書き込んだものです。そのやり取りで最後にあなたが返信すると、次に確かめたときに自動で消えます。返信しないと決めたものは「確認済み」にできます（相手がまた書き込むと、もう一度出ます）。</p>
       <div id="threadList"></div>
+      <p class="hint look-at"><span id="commentLookAt"></span><span class="ext-only">　コメントに気づけるのは note を開いたときです。noteを開いたままにしておくと早く気づけます（通知を<span id="noticeEveryText">5分</span>ごとに確かめます）。</span><span class="web-only">　コメントは、noteで「Ponで記録」をタップしたときに確かめます。</span> <button type="button" class="linkish meta goto-setting ext-only" data-goto-setting="noticeEvery">設定で見る</button></p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>自分のコメントへの返信（未確認） <span class="meta" id="mineRepliesMeta"></span></h2>
+        <button type="button" class="linkish meta goto-setting" data-goto-setting="badgeMineReplies">設定で見る</button></div>
+      <p class="hint">他の人の記事に書いたあなたのコメントに、返信が来たものです。「確認済み」を押すまで残ります。そのやり取りで最後にあなたが返信すると、自動で消えます。noteの通知から拾っているため、通知を切っている人や、通知が流れてしまった返信は出ません。</p>
+      <div id="mineRepliesList"></div>
     </div>
 
     <div class="card">
@@ -215,7 +237,7 @@
   <!-- カレンダー（v0.6.0 ⑨） -->
   <section id="tab-calendar" class="tab" hidden>
     <div class="card" id="calSoon" hidden></div>
-    <div class="card">
+    <div class="card" id="calCard">
       <div class="card-head">
         <h2 id="calTitle">カレンダー</h2>
         <div class="controls">
@@ -225,8 +247,8 @@
           <button type="button" class="btn small primary" data-cal="add">＋ 予定を足す</button>
         </div>
       </div>
-      <p class="hint">投稿した日は、Ponの記録（記事の公開日）から自動で出ます。「投稿予定」と「コンテスト」（締切日）は手で入れられます。日付を押すと、その日の予定を足せます。通知は出しません（この画面を開いたときに、近い締切を表示します）。</p>
-      <div class="cal-legend"><span class="lg"><i class="cal-dot posted"></i>投稿した記事</span><span class="lg"><i class="cal-dot plan"></i>投稿予定</span><span class="lg"><i class="cal-dot contest"></i>コンテストの締切</span></div>
+      <p class="hint">投稿した日は、Ponの記録（記事の公開日）から自動で出ます。「投稿予定」（特定の日か期間）、「コンテスト」（開始日〜終了日）、「その他」の予定は手で入れられます。日付を押すと、その日の予定を足せます。通知は出しません（この画面を開いたときに、近い締切・予定を表示します）。</p>
+      <div class="cal-legend" id="calLegend"><span class="lg"><i class="cal-mk posted">●</i>投稿した記事</span><span class="lg"><i class="cal-mk post">○</i>投稿予定</span><span class="lg"><i class="cal-mk contest">⚑</i>コンテスト</span><span class="lg"><i class="cal-mk other">◆</i>その他</span><span class="lg"><i class="cal-bandmk contest"></i>期間の予定（帯）</span><span class="lg"><i class="cal-bandmk post soft"></i>投稿予定・その他の期間（薄い帯）</span><button type="button" class="linkish meta" data-cal="colors">色を変える</button></div>
       <div id="calGrid" class="cal-grid" role="grid" aria-labelledby="calTitle"></div>
       <h3 class="subhead">この月の予定と投稿</h3>
       <ul id="calList" class="cal-list"></ul>
@@ -268,6 +290,12 @@
   </section>
 
   <section id="tab-data" class="tab" hidden>
+    <div class="card" id="allSettings">
+      <div class="card-head"><h2>設定の一覧</h2></div>
+      <p class="hint">Ponの設定はここですべて見られます。その場の切り替え（記事の一覧の上の「見出し画像」など）で変えたものも、ここに出ます。</p>
+      <div id="settingsList" class="settings-list"></div>
+    </div>
+
     <div class="card explain">
       <h2>「記録」と「ダウンロード」の違い</h2>
       <div class="flow">
@@ -283,7 +311,7 @@
       <h2>記録する</h2>
       <p>noteにログインした状態で <a href="https://note.com/" target="_blank" rel="noopener">note.com</a> を開き、ブックマークレット「<b>Ponで記録</b>」をタップします。記録が終わると自動でこの画面に戻り、データが追加されます。</p>
       <p><a class="btn primary" href="install.html">ブックマークレットの登録方法</a></p>
-      <p class="hint">スマホでは自動では記録されません。毎日1回タップすると、日ごとの増え方がきれいに記録されます。本文の保存はパソコン版Pon（Chrome拡張機能）でできます。</p>
+      <p class="hint">スマホでは自動では記録されません。毎日1回タップすると、日ごとの増え方がきれいに記録されます。本文の記録はパソコン版Pon（Chrome拡張機能）でできます。</p>
     </div>
 
     <div class="card" id="accountCard">
@@ -302,19 +330,26 @@
       <div id="featureList" class="feature-list"></div>
     </div>
 
+    <div class="card" id="colorCard">
+      <div class="card-head"><h2>グラフとカレンダーの色</h2><button type="button" class="btn small" data-color-reset-all="">すべて元の色に戻す</button></div>
+      <p class="hint">ここで決めた色を、概要のグラフ・記事カードの棒と線・マップの点・共有用の画像・カレンダーのすべてに使います。変えていない色は、着せ替え（明るい画面・暗い画面）ごとの元の色のままです。背景と見分けにくい色を選ぶと ⚠ が出ます。</p>
+      <div id="colorList" class="color-list"></div>
+    </div>
+
     <div class="card ext-only">
       <h2>noteから記録する</h2>
       <p><button class="btn primary" data-action="run-now">今すぐ記録する</button> <span class="meta" id="runStatus"></span></p>
       <p class="hint">noteのタブが開いていない場合は、noteのトップページを裏で開いて記録し、終わったら自動で閉じます。noteへのアクセスは1秒以上の間隔をあけて行います。</p>
       <div class="settings">
         <label class="check"><input type="checkbox" data-setting="autoCollect"> note を開いたときに1日1回、自動で記録する</label>
+        <label class="check"><input type="checkbox" data-setting="finalizePrev"> 前の日の記録を確定する（記録した日の数字を、noteの「その日の終わり」の数字に直します。前の日の統計も読みます）</label>
         <label class="check"><input type="checkbox" data-setting="checkComments"> 未返信コメントを確認する（6時間ごと）</label>
         <label class="check"><input type="checkbox" data-setting="recordMyComments"> 自分が書いたコメントを記録する</label>
         <label class="check"><input type="checkbox" data-setting="perkCheck"> 称号・着せ替えのために、@jeanjeanjean のフォロー・スキ・コメントを確認する（週に1回）</label>
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="bodyCard">
       <div class="card-head"><h2>記事の本文をダウンロード</h2></div>
       <p class="hint ext-only">ボタンを押すと、Ponにまだ記録していない記事の本文をnoteから取り込んでから、<b>全記事分のファイルをパソコンにダウンロード</b>します。初回は1記事1秒以上の間隔をあけるため、約200記事で4分ほどかかります（その間はこの画面を開いたままにしてください）。2回目からは、新しい記事の分だけ取り込むのですぐに終わります。</p>
       <p class="hint web-only">Web版では本文をnoteから取り込めません。パソコン版Pon（Chrome拡張機能）のバックアップを読み込むと、ここからダウンロードできます。</p>
@@ -335,7 +370,7 @@
       </details>
     </div>
 
-    <div class="card">
+    <div class="card" id="backupCard">
       <h2>数値のダウンロード・バックアップ</h2>
       <div class="btn-row">
         <button class="btn dl" data-action="csv-latest">⬇ 最新の数値をダウンロード（CSV）</button>
@@ -345,8 +380,13 @@
       <p class="hint">Ponに記録したデータは、このブラウザの中にだけあります。<span class="ext-only">拡張機能を削除すると消えるので、</span><span class="web-only">ブラウザの「Cookieとサイトデータ」を削除すると消え、機種変更でも引き継がれないので、</span>ときどきバックアップファイルをダウンロードしておいてください。パソコン版とWeb版のバックアップは互いに読み込めます。<span id="storageInfo"></span></p>
       <div class="btn-row">
         <button class="btn dl" data-action="json-backup">⬇ バックアップをダウンロード（JSON）</button>
-        <button class="btn web-only" data-action="share-backup">⬆ バックアップを共有（ドライブ等に保存）</button>
+        <button class="btn web-only" data-action="share-backup">⬆ バックアップを共有（ドライブなどに置く）</button>
         <label class="btn">⬆ バックアップファイルから復元<input type="file" accept="application/json" id="importFile" hidden></label>
+      </div>
+      <h3 class="subhead">正規版への引っ越し</h3>
+      <p class="hint">Pirates of note は、正規版『Pirates' Editor for note』になりました。下のファイルを ⬇ ダウンロードして、正規版の「復元」で読み込むと、記録・設定・称号を引き継げます（このファイルはβ版のPonでは読み込めません）。</p>
+      <div class="btn-row">
+        <button class="btn dl" data-action="move-file">⬇ 正規版（Pirates' Editor for note）への引っ越し用ファイル</button>
       </div>
     </div>
 
@@ -369,8 +409,11 @@
 <div id="tooltip" class="tooltip" role="status" hidden></div>
 <script src="app/env.js"></script>
 <script src="app/db.js"></script>
+<script src="app/data.js"></script>
 <script src="app/store.js"></script>
 <script src="app/web.js"></script>
+<script src="app/threads.js"></script>
+<script src="app/backup.js"></script>
 <script src="app/dashboard.js"></script>
 <script src="app/periods.js"></script>
 <script src="app/views.js"></script>
@@ -381,8 +424,13 @@
 <script src="app/missions.js"></script>
 <script src="app/features.js"></script>
 <script src="app/account.js"></script>
+<script src="app/beta.js"></script>
+<script src="app/colors.js"></script>
+<script src="app/settings.js"></script>
+<script src="app/guide.js"></script>
 <script src="app/bodies.js"></script>
 <script src="app/perks.js"></script>
 <script src="app/webapp.js"></script>
+<script src="app/move.js"></script>
 </body>
 </html>

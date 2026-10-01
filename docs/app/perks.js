@@ -62,7 +62,11 @@
   ];
 
   /* ---------- 状態 ---------- */
-  const P = { perk: null, profile: { theme: 'standard', title: '', custom: '', epithet: '' }, quotedKeysFromBodies: [], u: null, loaded: false };
+  const BETA_TITLE = (typeof PonBeta !== 'undefined' && PonBeta.TITLE) || '初航海の乗組員';
+  /** β版からの特典の基準日（beta.js の BASE_DATE。1か所で管理）を「2026年9月30日」の形に */
+  const betaBaseText = () => { const d = (typeof PonBeta !== 'undefined' && PonBeta.calc.BASE_DATE) || '2026-09-30'; const [y, mo, da] = d.split('-').map(Number); return `${y}年${mo}月${da}日`; };
+  const BETA_MARK = (typeof PonBeta !== 'undefined' && PonBeta.MARK) || '🧭';
+  const P = { beta: null, perk: null, profile: { theme: 'standard', title: '', custom: '', epithet: '' }, quotedKeysFromBodies: [], u: null, loaded: false };
 
   function unlocks(me) {
     const captain = !!(me && me.urlname === CAPTAIN);
@@ -77,6 +81,7 @@
       commented: perk ? (perk.commentedKeys || []).length : 0,
       quoted,
       checkedAt: perk ? perk.checkedAt : 0,
+      beta: !!(P.beta && P.beta.granted), // v0.6.1 β版からの特典（フォローしていなくても使える）
     };
     if (captain) Object.assign(u, { liked: 99, commented: 99, quoted: 99, total: 99 });
     return u;
@@ -110,14 +115,14 @@
   function currentEpithet(u) { const t = String(P.profile.epithet || '').trim(); return t && !epithetProblem(t, u) ? t : ''; }
 
   function availableTitles(u) {
-    const admiral = u.admiral ? ADMIRAL_TITLES : [];
+    const admiral = [...(u.admiral ? ADMIRAL_TITLES : []), ...(u.beta ? [BETA_TITLE] : [])];
     if (!u.following) return [...admiral];
     return [...admiral, ...GROUPS.flatMap((g) => g.titles), ...SPECIALS.filter((s) => s.need(u)).map((s) => s.title)];
   }
 
   /** いま表示する称号（使えなくなっていたら出さない） */
   function currentTitle(u) {
-    if (!u.following && !u.admiral) return '';
+    if (!u.following && !u.admiral && !u.beta) return '';
     const pr = P.profile;
     if (!u.following && pr.title === '__custom') return '';
     if (pr.title === '__custom') return customProblem(pr.custom, u) ? '' : String(pr.custom || '').trim();
@@ -137,8 +142,9 @@
   }
 
   async function load() {
-    const [perk, profile, bodies] = await Promise.all([NDB.kvGet('perk', null), NDB.kvGet('profile', null), NDB.getAll('bodies')]);
+    const [perk, profile, bodies, beta] = await Promise.all([NDB.kvGet('perk', null), NDB.kvGet('profile', null), NDB.getAll('bodies'), NDB.kvGet('betaPerk', null)]);
     P.perk = perk;
+    P.beta = beta;
     P.profile = { theme: 'standard', title: '', custom: '', epithet: '', ...(profile || {}) };
     P.quotedKeysFromBodies = bodies.filter((b) => b && b.html && QUOTE_RE.test(b.html)).map((b) => b.noteKey);
     P.loaded = true;
@@ -151,7 +157,7 @@
   function renderHeader(u) {
     const who = $('#whoami');
     if (!who) return;
-    who.querySelectorAll('.title-chip, .epithet').forEach((x) => x.remove());
+    who.querySelectorAll('.title-chip, .epithet, .beta-mark').forEach((x) => x.remove());
     const ep = currentEpithet(u);
     if (ep && me()) {
       const e = document.createElement('span');
@@ -160,6 +166,14 @@
       who.prepend(e);
     }
     const t = currentTitle(u);
+    if (t === BETA_TITLE && u.beta && me()) {
+      const mk = document.createElement('span');
+      mk.className = 'beta-mark';
+      mk.textContent = BETA_MARK;
+      mk.title = `${BETA_TITLE}（β版からの特典）`;
+      mk.setAttribute('aria-label', mk.title);
+      who.append(mk);
+    }
     if (t && me()) {
       const chip = document.createElement('span');
       chip.className = 'title-chip';
@@ -199,10 +213,11 @@
 
   function renderTitle(u) {
     const sel = $('#titleSel'), custom = $('#titleCustom'), msg = $('#titleMsg');
-    const locked = !u.following && !u.admiral;
+    const locked = !u.following && !u.admiral && !u.beta;
     const specials = SPECIALS.filter((s) => s.need(u));
     const admiral = u.admiral ? `<optgroup label="noteの元帥">${ADMIRAL_TITLES.map((t) => `<option>${esc(t)}</option>`).join('')}</optgroup>` : '';
-    sel.innerHTML = '<option value="">（称号なし）</option>' + admiral
+    const beta = u.beta ? `<optgroup label="β版からの特典"><option>${esc(BETA_TITLE)}</option></optgroup>` : '';
+    sel.innerHTML = '<option value="">（称号なし）</option>' + beta + admiral
       + (!u.following ? '' : (specials.length ? `<optgroup label="特別な称号">${specials.map((s) => `<option>${esc(s.title)}</option>`).join('')}</optgroup>` : '')
       + GROUPS.map((g) => `<optgroup label="${esc(g.name)}">${g.titles.map((t) => `<option>${esc(t)}</option>`).join('')}</optgroup>`).join('')
       + '<option value="__custom">自由に名乗る…</option>');
@@ -268,16 +283,17 @@
         <span class="u-body"><b>${esc(s.title)}</b><span class="meta">${esc(s.how)}</span></span>
         <span class="u-prog">${u.captain ? '' : `${Math.min(a, b)} / ${b}`}<span class="u-bar"><span style="width:${pct}%"></span></span></span>
       </li>`;
-    }).join('') + `<li class="king"><span class="u-mark">⚓</span><span class="u-body"><b>元帥・大元帥</b><span class="meta">${u.admiral ? '名乗れます。上の「称号」から選んでください。' : 'この称号を名乗れるのは、noteの加藤貞顕さん（@sadaaki）と深津貴之さん（@fladdict）だけ。'}</span></span><span class="u-prog"></span></li>` + (u.captain ? '' : `<li class="king"><span class="u-mark">👑</span><span class="u-body"><b>海賊王</b><span class="meta">この称号を名乗れるのは、ジァン=サマー（@jeanjeanjean）ただ一人。</span></span><span class="u-prog"></span></li>`);
+    }).join('') + `<li class="${u.beta ? 'ok' : 'king'}"><span class="u-mark">${u.beta ? '🏅' : BETA_MARK}</span><span class="u-body"><b>${esc(BETA_TITLE)}</b><span class="meta">${u.beta ? 'β版からの特典です（条件：' + betaBaseText() + 'までに記録を始めていた人）。上の「称号」から選ぶと、名前の横に印（' + BETA_MARK + '）も付きます。フォローしていなくても使えます。' : '条件：' + betaBaseText() + 'までに記録を始めていた人（記録を始めた日で自動で判定します。前に使っていたPonのバックアップを復元すると引き継げます）'}</span></span><span class="u-prog"></span></li>` + `<li class="king"><span class="u-mark">⚓</span><span class="u-body"><b>元帥・大元帥</b><span class="meta">${u.admiral ? '名乗れます。上の「称号」から選んでください。' : 'この称号を名乗れるのは、noteの加藤貞顕さん（@sadaaki）と深津貴之さん（@fladdict）だけ。'}</span></span><span class="u-prog"></span></li>` + (u.captain ? '' : `<li class="king"><span class="u-mark">👑</span><span class="u-body"><b>海賊王</b><span class="meta">この称号を名乗れるのは、ジァン=サマー（@jeanjeanjean）ただ一人。</span></span><span class="u-prog"></span></li>`);
   }
 
-  function render() {
+  /** opts.headerOnly：名前の前の称号と着せ替えだけ（v0.6.2 B：称号・着せ替えのタブは開いたときに描く） */
+  function render(opts = {}) {
     if (!P.loaded) return;
     const u = unlocks(me());
     P.u = u;
     applyTheme(currentTheme(u));
     renderHeader(u);
-    if (!$('#tab-crew')) return;
+    if (!$('#tab-crew') || opts.headerOnly) return;
     renderStatus(u);
     renderTitle(u);
     renderEpithet(u);
@@ -340,8 +356,9 @@
     });
   }
 
-  async function init() { await load(); bind(); render(); }
+  const crewHidden = () => { const t = $('#tab-crew'); return !t || t.hidden; };
+  async function init() { await load(); bind(); render({ headerOnly: crewHidden() }); }
 
-  window.PonPerks = { render, reload: async () => { await load(); render(); }, _test: { unlocks, customProblem, epithetProblem, normalize, SPECIALS, THEMES, EPITHET_IDEAS } };
+  window.PonPerks = { render, reload: async () => { await load(); render({ headerOnly: crewHidden() }); }, _test: { unlocks, customProblem, epithetProblem, normalize, SPECIALS, THEMES, EPITHET_IDEAS } };
   init();
 })();
